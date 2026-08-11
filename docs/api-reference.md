@@ -73,6 +73,13 @@ wrong. Nothing in this package's nomenclature helpers depends on this endpoint
 for EMDN *term text*; a caller needing label text for a code will need another
 source.
 
+The `/referenceValues` row documents the public API's own endpoint, but this
+package does not call it: `eudamed.reference` reads reference values from the
+Data Lake instead, at `GET
+https://api.datalake.sante.service.ec.europa.eu/eudamed/reference?CODE={code}`
+(`api-version=v1.0`, `format=csv`), which returns every language in one CSV
+response and is documented nowhere.
+
 `GET /actors/{uuid}/publicInformation` returns the actor record nested under
 `actorDataPublicView`, not at the top level — the record's uuid is at
 `actorDataPublicView.uuid`. This differs from the device endpoint's flat response
