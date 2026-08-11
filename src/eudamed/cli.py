@@ -25,6 +25,39 @@ from eudamed.urls import actor_url, device_url
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 
+# One help string per verified filter, carrying its real semantics -- prefix
+# match, substring, exact, full refdata code -- rather than restating the flag
+# name. This matters most for --name: without the caveat here, --help alone
+# would lead a reader to believe it searches the device name, when it matches
+# a field that includes the manufacturer's registered name instead. A filter
+# added to VERIFIED_DEVICE_FILTERS without an entry here still gets a flag --
+# see the fallback in _add_filter_arguments -- so the generation can never
+# silently drop one, but it should get an entry before release.
+FILTER_HELP: dict[str, str] = {
+    "cndCode": "EMDN nomenclature code, prefix match (e.g. Z1203)",
+    "riskClassCode": "risk class, full refdata code (e.g. refdata.risk-class.class-iib)",
+    "deviceStatusCode": (
+        "device status, full refdata code "
+        "(e.g. refdata.device-model-status.on-the-market)"
+    ),
+    "applicableLegislation": (
+        "legislation, full refdata code (e.g. refdata.applicable-legislation.mdr)"
+    ),
+    "tradeName": "trade name, substring match, case-insensitive",
+    "name": (
+        "substring match against a field that INCLUDES the manufacturer's "
+        "registered name -- this is not a device-name search, and a hit does "
+        "not mean the device itself is named this"
+    ),
+    "primaryDi": "primary DI, exact match",
+    "basicUdi": "Basic UDI-DI, exact match",
+    "deviceTypes": (
+        "special device type, full refdata code "
+        "(e.g. refdata.special-mdr-device-type.software)"
+    ),
+    "deviceCriteria": "STANDARD (MDR) or LEGACY (Art. 120 MDD/AIMDD transitional), exact match",
+}
+
 
 def _kebab(name: str) -> str:
     """``cndCode`` -> ``cnd-code``. Used to derive flag names from filter names."""
@@ -38,7 +71,7 @@ def _add_filter_arguments(parser: argparse.ArgumentParser) -> None:
             f"--{_kebab(filter_name)}",
             dest=filter_name,
             default=None,
-            help=f"filter on {filter_name}",
+            help=FILTER_HELP.get(filter_name, f"filter on {filter_name} (undocumented)"),
         )
 
 
