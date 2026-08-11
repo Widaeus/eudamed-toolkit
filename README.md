@@ -58,9 +58,11 @@ redirect and you'll get a 200 and an HTML page, which looks like success. This
 client sets `allow_redirects=False` and treats any redirect as a miss
 (`None`), so a lookup failure surfaces as a lookup failure.
 
-See [`docs/api-reference.md`](docs/api-reference.md) for the rest — the full
-verified and non-working filter lists, the endpoints that 500 or 302
-unconditionally, and the fields the search response always returns `null`.
+See [`docs/api-reference.md`](docs/api-reference.md) for the rest — the
+endpoint map, the full verified and non-working filter lists, the endpoints
+that 500 or 302 unconditionally, the fields the search response always returns
+`null`, the throughput and throttling measurements, and the interface routes
+for linking back into the public site.
 
 ## Basic UDI-DI vs UDI-DI
 
@@ -88,14 +90,6 @@ it), so a run can be reconstructed and audited after the fact. Please rate-limit
 politely; this is shared public infrastructure, and it is logged on the
 Commission's side too. Pass `--contact you@example.org` to identify yourself
 in the User-Agent header.
-
-## Further reading
-
-[`docs/api-reference.md`](docs/api-reference.md) is the full reference: the
-endpoint map, every filter that has been verified to work or verified not to,
-throughput and throttling measurements, and the interface routes for linking
-back into the public site. It is the reason to use this package rather than
-write your own client from scratch.
 
 ## Licence and citation
 

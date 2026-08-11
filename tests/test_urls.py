@@ -31,8 +31,8 @@ def test_actor_url_uses_the_uuid_route_not_the_srn():
 @pytest.mark.parametrize("bad", ["", None, "   ", "FR-MF-000000687"])
 def test_url_builders_reject_anything_that_is_not_a_uuid(bad):
     """A blank or an SRN must raise rather than produce a link that 302s to the
-    page-not-found route. A dead link in a reviewer workbook is worse than a
-    missing one: the reviewer records 'cannot determine' against a broken URL."""
+    page-not-found route. A dead link is worse than no link, because it is
+    indistinguishable from a device that has no public record."""
     with pytest.raises(ValueError):
         urls.device_url(bad)
     with pytest.raises(ValueError):
@@ -40,9 +40,9 @@ def test_url_builders_reject_anything_that_is_not_a_uuid(bad):
 
 
 def test_device_search_url_encodes_filters():
-    u = urls.device_search_url(basicUdi="6429811134LapsiScribeG5")
+    u = urls.device_search_url(basicUdi="6429811134WidgetG5")
     assert u.startswith("https://ec.europa.eu/tools/eudamed/#/screen/search-device?")
-    assert "basicUdi=6429811134LapsiScribeG5" in u
+    assert "basicUdi=6429811134WidgetG5" in u
 
 
 def test_representative_uuid_prefers_the_latest_version():

@@ -1,8 +1,10 @@
 """Rate-limited, logged client for the EUDAMED public API.
 
-Endpoint names and query parameters were established empirically against the
-live public API; it is undocumented by the Commission, and parameters not
-listed in ``VERIFIED_DEVICE_FILTERS`` were verified to be inert.
+The API is undocumented by the Commission; endpoint names and query parameters
+here were established empirically against the live service. Each name in
+``VERIFIED_DEVICE_FILTERS`` was observed to change ``totalElements``; a name
+not on that list is refused rather than sent, because an unrecognised
+parameter is ignored silently and returns the whole register with a 200.
 
 Every request is appended to a JSONL run log so that an extraction can be
 reconstructed and audited after the fact.

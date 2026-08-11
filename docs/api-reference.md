@@ -192,10 +192,10 @@ from this endpoint.
 only intended-purpose prose in the public database sits inside SSCP documents,
 which exist for Class III and implantable devices only.
 
-Consequently, any text-based screen built on this API can see nothing but the
-device name, trade name and manufacturer name. A project that reports
-screening EUDAMED "intended purpose" text is describing a field that does not
-exist in the public data; whatever it screened, it was not that.
+Consequently, any text matching built on this API sees nothing but the device
+name, trade name and manufacturer name — and the manufacturer name only as
+part of the concatenation `name` matches. Anything that depends on a device's
+stated purpose has to come from outside the public API.
 
 ## Performance, throttling and politeness
 

@@ -192,8 +192,9 @@ class DataLakeClient:
     # ------------------------------------------------------------------ helpers
 
     def software_frame(self, kind: str = "mdr_software") -> Result:
-        """The software-flagged slice. Truncated at 1,000 rows — use for the
-        *flag census count*, not for enumeration; enumerate via `by_manufacturer`.
+        """The software-flagged slice. Truncated at 1,000 rows, so use it for the
+        count of flagged records, not to enumerate them; enumerate by manufacturer
+        via `by_manufacturer`.
         """
         return self.fetch("udi", SPECIAL_DEVICE_TYPE_ID=SPECIAL_DEVICE_TYPE[kind])
 
