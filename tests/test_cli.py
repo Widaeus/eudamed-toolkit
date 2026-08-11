@@ -8,6 +8,7 @@ import pytest
 
 from eudamed.cli import _kebab, main
 from eudamed.client import VERIFIED_DEVICE_FILTERS
+from eudamed.errors import RequestFailed
 
 
 def test_no_arguments_prints_usage_and_fails(capsys):
@@ -34,6 +35,49 @@ def test_search_prints_the_total(monkeypatch, capsys):
     monkeypatch.setattr("eudamed.cli.EudamedClient", _Client)
     assert main(["search", "--cnd-code", "Z12", "--count"]) == 0
     assert "206769" in capsys.readouterr().out.replace(",", "")
+
+
+def test_no_cache_stops_the_client_being_given_a_cache_directory(monkeypatch, capsys):
+    """The register changes daily. Without a way to turn the cache off, a
+    re-run can serve last month's records with nothing in the output saying
+    so."""
+    captured = {}
+
+    class _Client:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def count_devices(self, **filters):
+            return 1
+
+    monkeypatch.setattr("eudamed.cli.EudamedClient", _Client)
+    assert main(["search", "--count", "--no-cache", "--cnd-code", "Z12"]) == 0
+    assert captured["cache_dir"] is None
+
+    assert main(["search", "--count", "--cnd-code", "Z12"]) == 0
+    assert captured["cache_dir"] == "data/raw/.cache"
+
+
+def test_a_failed_request_exits_non_zero_with_its_own_code(monkeypatch, capsys):
+    """`--count` printing 0 and exiting 0 during an outage is a false answer.
+    Exit 3 is distinct from 1 (no such record) so a script can tell 'nothing
+    is there' from 'we could not find out'."""
+
+    class _Client:
+        def __init__(self, **kw):
+            pass
+
+        def count_devices(self, **filters):
+            raise RequestFailed(
+                "https://ec.europa.eu/tools/eudamed/api/devices/udiDiData",
+                filters, status=503, attempts=8,
+            )
+
+    monkeypatch.setattr("eudamed.cli.EudamedClient", _Client)
+    assert main(["search", "--count", "--cnd-code", "Z1203"]) == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "503" in captured.err
 
 
 def test_an_unverified_filter_is_refused_before_any_request(monkeypatch, capsys):

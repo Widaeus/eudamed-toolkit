@@ -19,6 +19,7 @@ from typing import Any
 
 from eudamed import __version__, nomenclature
 from eudamed.client import VERIFIED_DEVICE_FILTERS, EudamedClient
+from eudamed.errors import RequestFailed
 from eudamed.export import FORMATS, export_devices
 from eudamed.reference import ReferenceMaps
 from eudamed.urls import actor_url, device_url
@@ -85,7 +86,7 @@ def _collect_filters(args: argparse.Namespace) -> dict[str, Any]:
 
 def _build_client(args: argparse.Namespace) -> EudamedClient:
     return EudamedClient(
-        cache_dir=args.cache_dir,
+        cache_dir=None if getattr(args, "no_cache", False) else args.cache_dir,
         run_log=args.log,
         min_interval=args.min_interval,
         contact=args.contact,
@@ -102,6 +103,14 @@ def _global_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         default="data/raw/.cache",
         help="directory for cached responses (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help=(
+            "ignore and do not write the detail cache; the register changes "
+            "daily, so a cached record can be arbitrarily old"
+        ),
     )
     parser.add_argument(
         "--min-interval",
@@ -185,7 +194,9 @@ def _cmd_missing_subcommand(args: argparse.Namespace) -> int:
 
 
 def _cmd_reference(args: argparse.Namespace) -> int:
-    maps = ReferenceMaps.load(Path(args.cache) if args.cache else None)
+    maps = ReferenceMaps.load(
+        Path(args.cache) if args.cache else None, contact=args.contact
+    )
     if args.code and args.id is not None:
         print(getattr(maps, args.code)(args.id))
         return 0
@@ -266,6 +277,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reference.add_argument("--cache", default=None, help="path to a reference-map cache file")
     reference.add_argument(
+        "--contact", default=None, help="contact string appended to the User-Agent header"
+    )
+    reference.add_argument(
         "--code", choices=("risk_class", "legislation", "status"), default=None,
         help="reference map to look up a single value in",
     )
@@ -276,12 +290,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Exit codes: 0 success, 1 no such record, 2 usage, 3 request failed.
+
+    3 is deliberately distinct from both 0 and 1. A command that could not
+    reach the register has not found nothing -- it has found out nothing --
+    and a script driving this must be able to tell the difference without
+    parsing prose.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_usage(sys.stderr)
         return 2
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except RequestFailed as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":
