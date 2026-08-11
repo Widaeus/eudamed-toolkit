@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import json
 
-from eudamed.provenance import PERSONAL_DATA_FIELDS, strip_personal_data, write_manifest
+from eudamed.provenance import (
+    PERSONAL_DATA_FIELDS,
+    strip_personal_data,
+    write_file_manifest,
+    write_manifest,
+)
 
 
 def test_contact_fields_are_removed_at_every_depth():
@@ -37,6 +42,34 @@ def test_the_manifest_does_not_hash_itself(tmp_path):
     write_manifest(tmp_path, label="test-label")
     manifest = json.loads(write_manifest(tmp_path, label="test-label").read_text())
     assert manifest["n_files"] == 1
+
+
+def test_a_file_manifest_hashes_only_the_files_it_was_given(tmp_path):
+    """The directory form is for a directory that *is* a snapshot. Given a set
+    of artefacts instead, nothing else in the directory is opened, hashed or
+    named."""
+    (tmp_path / "wanted.jsonl").write_text("one\n")
+    (tmp_path / "unrelated.pdf").write_bytes(b"someone else's file")
+
+    path = write_file_manifest(
+        [tmp_path / "wanted.jsonl"],
+        tmp_path / "wanted.jsonl.manifest.json",
+        label="wanted",
+    )
+    manifest = json.loads(path.read_text())
+
+    assert manifest["n_files"] == 1
+    assert [f["path"] for f in manifest["files"]] == ["wanted.jsonl"]
+    assert "unrelated.pdf" not in path.read_text()
+
+
+def test_a_directory_manifest_ignores_per_file_manifests(tmp_path):
+    """A manifest is provenance, not an artefact; hashing one export's manifest
+    into another's file list would make the two describe each other."""
+    (tmp_path / "a.jsonl").write_text("one\n")
+    (tmp_path / "a.jsonl.manifest.json").write_text("{}")
+    manifest = json.loads(write_manifest(tmp_path, label="test-label").read_text())
+    assert [f["path"] for f in manifest["files"]] == ["a.jsonl"]
 
 
 def test_the_manifest_records_the_legal_basis(tmp_path):

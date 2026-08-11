@@ -42,10 +42,50 @@ def test_the_export_writes_a_manifest_recording_the_filters(tmp_path):
     client = _PagingClient([[{"uuid": "a", "basicUdi": "AAA"}]])
     out = tmp_path / "devices.jsonl"
     report = export_devices(client, out, fmt="jsonl", cndCode="Z12")
-    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    manifest_path = tmp_path / "devices.jsonl.manifest.json"
+    manifest = json.loads(manifest_path.read_text())
     assert manifest["filters"] == {"cndCode": "Z12"}
-    assert manifest["n_files"] >= 1
-    assert report["manifest"].endswith("manifest.json")
+    assert [f["path"] for f in manifest["files"]] == ["devices.jsonl"]
+    assert report["manifest"] == str(manifest_path)
+
+
+def test_two_exports_into_one_directory_keep_two_manifests(tmp_path):
+    """I3. A single manifest.json per directory means the second export
+    overwrites the first's provenance, leaving two data files and one manifest
+    naming only one query -- with nothing on disk saying which file it
+    describes."""
+    client = _PagingClient([[{"uuid": "a"}]])
+    export_devices(client, tmp_path / "mdr.jsonl", fmt="jsonl",
+                   applicableLegislation="refdata.applicable-legislation.mdr")
+    export_devices(client, tmp_path / "ivdr.jsonl", fmt="jsonl",
+                   applicableLegislation="refdata.applicable-legislation.ivdr")
+
+    mdr = json.loads((tmp_path / "mdr.jsonl.manifest.json").read_text())
+    ivdr = json.loads((tmp_path / "ivdr.jsonl.manifest.json").read_text())
+    assert mdr["filters"]["applicableLegislation"].endswith(".mdr")
+    assert ivdr["filters"]["applicableLegislation"].endswith(".ivdr")
+    assert [f["path"] for f in mdr["files"]] == ["mdr.jsonl"]
+    assert [f["path"] for f in ivdr["files"]] == ["ivdr.jsonl"]
+
+
+def test_the_manifest_names_only_the_files_this_export_wrote(tmp_path):
+    """I4. Exporting into a home or project directory used to rglob it and
+    SHA-256 every file found, recording each path: a performance trap on a
+    large tree and a disclosure of filenames that have nothing to do with the
+    extract."""
+    (tmp_path / "tax-return-2025.pdf").write_bytes(b"not part of the export")
+    (tmp_path / "subdir").mkdir()
+    (tmp_path / "subdir" / "notes.txt").write_text("private")
+
+    client = _PagingClient([[{"uuid": "a"}]])
+    out = tmp_path / "devices.jsonl"
+    export_devices(client, out, fmt="jsonl")
+
+    manifest = json.loads((tmp_path / "devices.jsonl.manifest.json").read_text())
+    assert [f["path"] for f in manifest["files"]] == ["devices.jsonl"]
+    assert manifest["n_files"] == 1
+    assert "tax-return-2025.pdf" not in json.dumps(manifest)
+    assert "notes.txt" not in json.dumps(manifest)
 
 
 def test_csv_export_unions_keys_across_records(tmp_path):
@@ -88,6 +128,8 @@ def test_csv_export_leaves_no_temporary_buffer_behind(tmp_path):
     export_devices(client, out, fmt="csv")
     assert list(tmp_path.glob("*.buffer.jsonl")) == []
     assert list(tmp_path.glob("*.part")) == []
+    manifest = json.loads((tmp_path / "devices.csv.manifest.json").read_text())
+    assert [f["path"] for f in manifest["files"]] == ["devices.csv"]
 
 
 class _FailingClient:

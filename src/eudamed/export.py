@@ -12,11 +12,17 @@ file is removed once the CSV is written successfully, and left in place (named
 for inspection) if the second pass raises, since a half-written CSV is worse
 than a leftover buffer.
 
-Every export writes ``manifest.json`` beside the output via
-``provenance.write_manifest``, with the filters recorded in the ``extra``
+Every export writes ``<out>.manifest.json`` beside the output via
+``provenance.write_file_manifest``, with the filters recorded in the ``extra``
 block. The EUDAMED public API offers no way to reconstruct a query after the
 fact, so an export whose filters are not recorded on disk cannot be
-replicated.
+replicated. The manifest is named after the output file rather than being a
+single ``manifest.json`` per directory, because two exports into one
+directory would otherwise leave one manifest describing one of them and two
+data files -- and nothing on disk saying which. It hashes only the files this
+export wrote: pointed at a whole directory it would hash and name every
+unrelated file sitting next to the output, which is slow on a large tree and
+discloses filenames that are nobody's business.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Protocol
 
-from eudamed.provenance import write_manifest
+from eudamed.provenance import write_file_manifest
 
 FORMATS = ("jsonl", "csv", "parquet")
 
@@ -216,7 +222,8 @@ def export_devices(
     boolean, so filter before enabling it on anything close to the full
     register.
 
-    Returns ``{"records": int, "path": str, "manifest": str, "filters": dict}``.
+    Returns ``{"records": int, "path": str, "manifest": str, "filters": dict}``,
+    where ``manifest`` is ``<out>.manifest.json``.
     Raises ``ValueError`` if ``fmt`` is not one of ``FORMATS``.
     """
     if fmt not in FORMATS:
@@ -235,8 +242,11 @@ def export_devices(
     else:
         n = _write_parquet(records, out)
 
-    manifest_path = write_manifest(
-        out.parent, label=out.stem, extra={"filters": filters, "format": fmt, "enrich": enrich}
+    manifest_path = write_file_manifest(
+        [out],
+        out.with_name(out.name + ".manifest.json"),
+        label=out.stem,
+        extra={"filters": filters, "format": fmt, "enrich": enrich},
     )
 
     return {
