@@ -8,4 +8,8 @@ __pycache__/
 dist/
 build/
 .cache/
-*.jsonl
+# Run logs and crawl output only -- deliberately not a bare *.jsonl, which
+# would also swallow any JSONL test fixture added later.
+logs/
+data/
+*.buffer.jsonl
