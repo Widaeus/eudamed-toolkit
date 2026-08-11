@@ -166,7 +166,12 @@ def _cmd_export(args: argparse.Namespace) -> int:
     client = _build_client(args)
     filters = _collect_filters(args)
     report = export_devices(
-        client, Path(args.out), fmt=args.format, enrich=args.enrich, **filters
+        client,
+        Path(args.out),
+        fmt=args.format,
+        enrich=args.enrich,
+        resume=args.resume,
+        **filters,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
@@ -248,6 +253,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument(
         "--enrich", action="store_true", help="merge in each device's Basic UDI-DI detail"
+    )
+    export.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "continue an interrupted export from <out>.progress.json instead of "
+            "starting over. THE RESULT IS NOT A POINT-IN-TIME SNAPSHOT: the "
+            "search endpoint has no server-side sort and the register changes "
+            "daily, so page boundaries move between runs and records can be "
+            "duplicated across the seam or missed. The manifest records that "
+            "the export was resumed"
+        ),
     )
     _add_filter_arguments(export)
     export.set_defaults(func=_cmd_export)

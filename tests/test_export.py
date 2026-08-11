@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from eudamed.errors import RequestFailed
 from eudamed.export import FORMATS, _write_parquet, export_devices
 
 
@@ -16,10 +17,12 @@ class _PagingClient:
         self.pages = pages
         self.details = details or {}
         self.detail_calls = 0
+        self.pages_served = []
 
-    def iter_devices(self, page_size=300, max_pages=None, **filters):
-        for page in self.pages:
-            yield from page
+    def search_devices(self, page=0, page_size=300, **filters):
+        self.pages_served.append(page)
+        content = self.pages[page] if page < len(self.pages) else []
+        return {"content": content, "last": page >= len(self.pages) - 1}
 
     def basic_udi_detail(self, uuid):
         self.detail_calls += 1
@@ -133,11 +136,12 @@ def test_csv_export_leaves_no_temporary_buffer_behind(tmp_path):
 
 
 class _FailingClient:
-    """Yields one record, then blows up -- simulates a connection dropping
+    """Serves one page, then blows up -- simulates a connection dropping
     partway through a crawl."""
 
-    def iter_devices(self, page_size=300, max_pages=None, **filters):
-        yield {"uuid": "a"}
+    def search_devices(self, page=0, page_size=300, **filters):
+        if page == 0:
+            return {"content": [{"uuid": "a"}], "last": False}
         raise RuntimeError("connection reset")
 
     def basic_udi_detail(self, uuid):  # pragma: no cover - not reached
@@ -224,3 +228,171 @@ def test_parquet_export_raises_a_clear_error_when_pyarrow_is_absent(tmp_path, mo
     client = _PagingClient([[{"uuid": "a"}]])
     with pytest.raises(ImportError, match="parquet"):
         export_devices(client, tmp_path / "d.parquet", fmt="parquet")
+
+
+# --------------------------------------------------------------------- resume
+
+
+class _ResumableClient:
+    """Serves fixed pages and raises `RequestFailed` on the pages named in
+    `fail_on`, so a crawl can be made to die at a chosen boundary and then be
+    restarted against a differently-drifted register."""
+
+    def __init__(self, pages, fail_on=()):
+        self.pages = pages
+        self.fail_on = set(fail_on)
+        self.pages_served = []
+
+    def search_devices(self, page=0, page_size=300, **filters):
+        if page in self.fail_on:
+            raise RequestFailed(
+                "https://example.invalid/devices/udiDiData",
+                {"page": page},
+                status=503,
+                attempts=8,
+            )
+        self.pages_served.append(page)
+        content = self.pages[page] if page < len(self.pages) else []
+        more_to_come = any(p > page for p in self.fail_on)
+        return {"content": content,
+                "last": page >= len(self.pages) - 1 and not more_to_come}
+
+    def basic_udi_detail(self, uuid):  # pragma: no cover - not reached
+        raise AssertionError("should not be called")
+
+
+def _uuids(path):
+    return [json.loads(line)["uuid"] for line in path.read_text().strip().splitlines()]
+
+
+def test_a_failed_crawl_leaves_a_checkpoint_and_keeps_its_partial_output(tmp_path):
+    """Since a page that cannot be fetched raises rather than truncating
+    silently, a crawl that dies at the last page yields nothing at all unless
+    the pages already fetched are kept along with a note of where to pick up."""
+    client = _ResumableClient([[{"uuid": "a"}, {"uuid": "b"}]], fail_on=[1])
+    out = tmp_path / "devices.jsonl"
+
+    with pytest.raises(RequestFailed):
+        export_devices(client, out, fmt="jsonl", cndCode="Z12")
+
+    checkpoint = json.loads((tmp_path / "devices.jsonl.progress.json").read_text())
+    assert checkpoint["next_page"] == 1
+    assert checkpoint["records_written"] == 2
+    assert checkpoint["last_page_uuids"] == ["a", "b"]
+    assert checkpoint["filters"] == {"cndCode": "Z12"}
+
+    assert not out.exists()
+    partial = tmp_path / "devices.jsonl.part"
+    assert _uuids(partial) == ["a", "b"]
+
+
+def test_resuming_continues_from_the_recorded_page_and_unions_both_runs(tmp_path):
+    out = tmp_path / "devices.jsonl"
+    first = _ResumableClient([[{"uuid": "a"}, {"uuid": "b"}]], fail_on=[1])
+    with pytest.raises(RequestFailed):
+        export_devices(first, out, fmt="jsonl", cndCode="Z12")
+
+    second = _ResumableClient([[{"uuid": "a"}, {"uuid": "b"}],
+                               [{"uuid": "c"}, {"uuid": "d"}]])
+    report = export_devices(second, out, fmt="jsonl", resume=True, cndCode="Z12")
+
+    assert second.pages_served == [1]
+    assert _uuids(out) == ["a", "b", "c", "d"]
+    assert report["records"] == 4
+
+
+def test_a_record_duplicated_across_the_seam_is_written_once(tmp_path):
+    """The search endpoint has no server-side sort and the register changes
+    daily, so a record can slide from one page to the next while the crawl is
+    paused. The checkpoint's record of the last page written is what stops it
+    being written twice."""
+    out = tmp_path / "devices.jsonl"
+    first = _ResumableClient([[{"uuid": "a"}, {"uuid": "b"}]], fail_on=[1])
+    with pytest.raises(RequestFailed):
+        export_devices(first, out, fmt="jsonl")
+
+    # `b` has drifted back onto page 1 by the time the crawl is restarted.
+    second = _ResumableClient([[{"uuid": "a"}], [{"uuid": "b"}, {"uuid": "c"}]])
+    report = export_devices(second, out, fmt="jsonl", resume=True)
+
+    assert _uuids(out) == ["a", "b", "c"]
+    assert report["records"] == 3
+
+
+def test_resuming_with_different_filters_refuses_and_names_the_field(tmp_path):
+    """Resuming one query into another query's output file would blend two
+    result sets into one file carrying one manifest."""
+    out = tmp_path / "devices.jsonl"
+    with pytest.raises(RequestFailed):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]], fail_on=[1]), out,
+            fmt="jsonl", cndCode="Z12",
+        )
+
+    with pytest.raises(ValueError, match="filters"):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]]), out,
+            fmt="jsonl", resume=True, cndCode="W99",
+        )
+
+
+def test_resuming_with_a_different_format_refuses_and_names_the_field(tmp_path):
+    out = tmp_path / "devices.jsonl"
+    with pytest.raises(RequestFailed):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]], fail_on=[1]), out, fmt="jsonl",
+        )
+
+    with pytest.raises(ValueError, match="fmt"):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]]), out, fmt="csv", resume=True,
+        )
+
+
+def test_a_completed_export_removes_its_checkpoint(tmp_path):
+    client = _PagingClient([[{"uuid": "a"}], [{"uuid": "b"}]])
+    out = tmp_path / "devices.jsonl"
+    export_devices(client, out, fmt="jsonl")
+    assert list(tmp_path.glob("*.progress.json")) == []
+
+
+def test_a_resumed_export_is_marked_as_resumed_in_its_manifest(tmp_path):
+    """A stitched-together extract must be distinguishable on disk from a
+    single-pass one: it is not a point-in-time snapshot."""
+    out = tmp_path / "devices.jsonl"
+    with pytest.raises(RequestFailed):
+        export_devices(_ResumableClient([[{"uuid": "a"}]], fail_on=[1]), out)
+
+    export_devices(
+        _ResumableClient([[{"uuid": "a"}], [{"uuid": "b"}]]), out, resume=True
+    )
+
+    manifest = json.loads((tmp_path / "devices.jsonl.manifest.json").read_text())
+    assert manifest["resumed"] is True
+    assert manifest["resume_points"] == 1
+
+
+def test_a_clean_export_is_marked_as_not_resumed_in_its_manifest(tmp_path):
+    client = _PagingClient([[{"uuid": "a"}]])
+    out = tmp_path / "devices.jsonl"
+    export_devices(client, out, fmt="jsonl")
+    manifest = json.loads((tmp_path / "devices.jsonl.manifest.json").read_text())
+    assert manifest["resumed"] is False
+    assert manifest["resume_points"] == 0
+
+
+def test_without_resume_an_existing_checkpoint_is_started_over_not_continued(tmp_path):
+    """Resuming is opt-in. A re-run that does not ask for it must produce a
+    single-pass extract, not silently inherit a previous run's records."""
+    out = tmp_path / "devices.jsonl"
+    with pytest.raises(RequestFailed):
+        export_devices(_ResumableClient([[{"uuid": "a"}, {"uuid": "b"}]], fail_on=[1]), out)
+
+    second = _ResumableClient([[{"uuid": "a"}, {"uuid": "b"}],
+                               [{"uuid": "c"}, {"uuid": "d"}]])
+    export_devices(second, out, fmt="jsonl")
+
+    assert second.pages_served == [0, 1]
+    assert _uuids(out) == ["a", "b", "c", "d"]
+    manifest = json.loads((tmp_path / "devices.jsonl.manifest.json").read_text())
+    assert manifest["resumed"] is False

@@ -36,6 +36,38 @@ eudamed export z1203.jsonl --cnd-code Z1203
 eudamed device 8dc77343-25b8-493b-b7f7-5c2bdebcf6b1
 ```
 
+## Resuming an interrupted export
+
+A filtered export walks the search endpoint page by page, and a page that
+cannot be fetched raises rather than truncating the file silently — so a crawl
+that dies at page 140 of 149 would otherwise have to start again from page 0.
+Each completed page is recorded in `<out>.progress.json`, and `--resume`
+carries on from the next unfetched page:
+
+```bash
+eudamed export z1203.jsonl --cnd-code Z1203            # dies at page 140
+eudamed export z1203.jsonl --cnd-code Z1203 --resume   # picks up at page 140
+```
+
+A checkpoint whose filters, format, page size or `--enrich` setting do not
+match the current command is refused, naming the field that differs; resuming
+one query into another query's file would blend two result sets into one file
+carrying one manifest. Without `--resume` an existing checkpoint is ignored
+and the output overwritten. A completed export deletes its checkpoint.
+
+**A resumed export is not a point-in-time snapshot.** The search endpoint has
+no server-side sort and the register changes daily, so page boundaries do not
+hold between runs: one device registered or withdrawn while the crawl is
+paused shifts every later record by one position. The resulting file is
+stitched together from two or more moments and can duplicate records across
+the seam or miss them. The checkpoint stores the uuids of the last page
+written and skips them on resume, which catches drift smaller than one page —
+the common case — but larger drift cannot be detected through this API at
+all: there is no "changed since" filter, and `lastUpdateDate` is null in every
+search response. The manifest therefore carries `resumed` and `resume_points`,
+so a stitched extract is distinguishable from a single-pass one on disk. If
+the extract has to be a snapshot, re-run it from scratch.
+
 ## Three things the API does that will cost you a day
 
 **It silently ignores parameters it does not recognise.** A misspelled or

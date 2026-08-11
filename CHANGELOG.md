@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `eudamed.export` — resumable exports. Every completed page is recorded in
+  `<out>.progress.json`; an export that raises leaves that checkpoint and its
+  partial output in place, and `export_devices(..., resume=True)` (`--resume`
+  on the CLI) continues from the next unfetched page rather than starting
+  over. A checkpoint whose `filters`, `fmt`, `page_size` or `enrich` differ
+  from the current call is refused, naming the field that differs, since
+  resuming one query into another query's file would blend two result sets.
+  A completed export deletes its checkpoint.
+
+  **A resumed export is not a point-in-time snapshot.** The search endpoint
+  has no server-side sort and the register changes daily, so page boundaries
+  move between runs and the result is stitched together from two or more
+  moments. The checkpoint stores the uuids of the last page written and skips
+  them on resume, which catches drift smaller than one page; larger drift
+  cannot be detected through this API. The manifest records `resumed` and
+  `resume_points` so a stitched extract can be told from a clean one on disk.
+
+### Changed
+
+- `eudamed.export` now walks `client.search_devices` page by page rather than
+  `client.iter_devices`, which flattens away the page boundaries a checkpoint
+  needs. The client's public interface is unchanged.
+- `eudamed.export` checks for `pyarrow` before starting the crawl rather than
+  after it, so a missing Parquet extra is not discovered at the end of a
+  several-hour export.
+
 ## [0.1.0] - 2026-08-11
 
 ### Added

@@ -137,7 +137,9 @@ def test_export_passes_its_filters_through_to_export_devices(monkeypatch, tmp_pa
         def __init__(self, **kw):
             pass
 
-    def _fake_export_devices(client, out, fmt="jsonl", enrich=False, progress=None, **filters):
+    def _fake_export_devices(
+        client, out, fmt="jsonl", enrich=False, progress=None, resume=False, **filters
+    ):
         captured["out"] = out
         captured["fmt"] = fmt
         captured["enrich"] = enrich
