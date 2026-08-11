@@ -24,6 +24,8 @@ from pathlib import Path
 
 import requests
 
+from eudamed import user_agent as _default_user_agent
+
 REFERENCE_URL = "https://api.datalake.sante.service.ec.europa.eu/eudamed/reference"
 
 RISK_CLASS_ID = "RISK_CLASS_ID"
@@ -34,13 +36,26 @@ REFERENCE_CODES = (RISK_CLASS_ID, DEVICE_STATUS_TYPE_ID, APPLICABLE_LEGISLATION_
 log = logging.getLogger("eudamed.reference")
 
 
+def build_session(contact: str | None = None) -> requests.Session:
+    """A session identifying itself as this package, with an optional contact.
+
+    Calling ``requests.get`` directly sends the library's default User-Agent,
+    which tells the Commission's logs nothing about who is making the request
+    or how to reach them. Every other request this package makes is
+    identified; these three were the exception.
+    """
+    session = requests.Session()
+    session.headers.update({"User-Agent": _default_user_agent(contact)})
+    return session
+
+
 def _get_csv(code: str, session: requests.Session | None = None) -> str:
     """Issue one GET for a single reference CODE and return the response body.
 
     Isolated from `ReferenceMaps.load` so tests can replace it without a
     network call.
     """
-    http = session or requests
+    http = session if session is not None else build_session()
     resp = http.get(
         REFERENCE_URL,
         timeout=60,
@@ -119,7 +134,7 @@ class ReferenceMaps:
         return self._lookup(DEVICE_STATUS_TYPE_ID, value_id)
 
     @classmethod
-    def load(cls, cache: Path | None = None) -> ReferenceMaps:
+    def load(cls, cache: Path | None = None, contact: str | None = None) -> ReferenceMaps:
         """Load {CODE: {id: english label}}, cached so a rebuild works offline.
 
         A fetch failure yields an empty map for that code rather than raising,
@@ -135,9 +150,10 @@ class ReferenceMaps:
 
         maps: dict[str, dict[str, str]] = {}
         fetch_failed = False
+        session = build_session(contact)
         for code in REFERENCE_CODES:
             try:
-                maps[code] = _parse_english(_get_csv(code))
+                maps[code] = _parse_english(_get_csv(code, session))
                 log.info("reference %s: %d values", code, len(maps[code]))
             except (requests.RequestException, OSError, ValueError, KeyError) as exc:
                 log.warning("could not fetch reference %s: %s", code, exc)

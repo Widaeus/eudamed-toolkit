@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from eudamed.reference import ReferenceMaps
+from eudamed.reference import ReferenceMaps, build_session
 
 CSV = (
     "ID,CODE,LANGUAGE,VALUE\n"
@@ -20,6 +20,30 @@ def test_only_english_labels_are_kept(monkeypatch):
     maps = ReferenceMaps.load(cache=None)
     assert maps.risk_class("-204") == "Class IIa"
     assert maps.risk_class("-205") == "Class IIb"
+
+
+def test_reference_requests_identify_the_tool_and_a_contact(monkeypatch):
+    """These three requests used to go out through `requests.get` directly,
+    carrying the library's default User-Agent on shared public
+    infrastructure."""
+    sessions = []
+
+    def fake(code, session=None):
+        sessions.append(session)
+        return CSV
+
+    monkeypatch.setattr("eudamed.reference._get_csv", fake)
+    ReferenceMaps.load(cache=None, contact="someone@example.org")
+
+    agents = {s.headers["User-Agent"] for s in sessions}
+    assert len(agents) == 1
+    agent = agents.pop()
+    assert agent.startswith("eudamed-toolkit/")
+    assert "someone@example.org" in agent
+
+
+def test_the_default_session_still_identifies_the_tool():
+    assert build_session().headers["User-Agent"].startswith("eudamed-toolkit/")
 
 
 def test_an_unknown_id_returns_the_id_unchanged(monkeypatch):
