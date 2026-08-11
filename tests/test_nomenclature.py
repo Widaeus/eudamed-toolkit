@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from eudamed.client import EudamedClient
+from eudamed.errors import RequestFailed
 from eudamed.nomenclature import sweep, terminal_codes, walk
+
+from .conftest import FakeResponse
 
 
 def test_terminal_codes_filters_by_suffix():
@@ -168,3 +172,30 @@ def test_walk_raises_type_error_on_a_dict_without_a_known_list_key():
     with pytest.raises(TypeError) as excinfo:
         list(walk(client))
     assert "totalElements" in str(excinfo.value)
+
+
+def test_walk_raises_when_the_endpoint_is_down(tmp_path, fake_session):
+    """I2, and not a hypothetical: GET /devices/nomenclatures/ answered HTTP
+    500 to every form tried on 2026-08-11, so this is the path a live walk
+    actually takes. Printing `[]` and exiting 0 states that the EMDN tree is
+    empty, which the module's own docstring promises never to do."""
+    client = EudamedClient(cache_dir=tmp_path / "cache",
+                           run_log=tmp_path / "requests.jsonl",
+                           min_interval=0.0, max_retries=2)
+    fake_session.queue(FakeResponse(500), FakeResponse(500))
+    with pytest.raises(RequestFailed) as excinfo:
+        list(walk(client))
+    assert excinfo.value.status == 500
+    assert "nomenclatures" in excinfo.value.url
+
+
+def test_sweep_raises_when_a_count_cannot_be_taken(tmp_path, fake_session):
+    """The compounding case: a code whose count failed would otherwise be
+    recorded as zero devices, and every sub-count under it recorded as zero
+    without a request ever being made."""
+    client = EudamedClient(cache_dir=tmp_path / "cache",
+                           run_log=tmp_path / "requests.jsonl",
+                           min_interval=0.0, max_retries=1)
+    fake_session.queue(FakeResponse(503))
+    with pytest.raises(RequestFailed):
+        sweep(client, ["Z120392"], legacy={"deviceCriteria": "LEGACY"})

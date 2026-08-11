@@ -19,6 +19,15 @@ under ``uuid``, ``cndUuid`` or ``id``; a node with none of those raises
 ``ValueError`` naming the keys it does have, rather than being dropped.
 ``sweep`` expects a ``client`` with a ``count_devices(**filters)`` method
 returning an integer.
+
+**Status of the underlying endpoint.** ``GET /devices/nomenclatures/``
+returned HTTP 500 for every form tried on 2026-08-11 (see
+``docs/api-reference.md``), so a live traversal currently fails rather than
+succeeding. That failure propagates out of ``walk`` as ``RequestFailed``: an
+outage must not be indistinguishable from a tree with no nodes, which is
+precisely what returning an empty list would make it. The shape handling
+above is therefore written against the endpoint's documented contract and
+remains unverified against a live response.
 """
 
 from __future__ import annotations
