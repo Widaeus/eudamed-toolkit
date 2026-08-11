@@ -55,7 +55,8 @@ from typing import Any
 
 import requests
 
-from eudamed import __version__
+from eudamed import user_agent as _default_user_agent
+from eudamed.errors import RequestFailed
 
 BASE = "https://api.datalake.sante.service.ec.europa.eu/eudamed"
 API_VERSION = "v1.0"
@@ -92,13 +93,10 @@ class DataLakeClient:
         user_agent: str | None = None,
         contact: str | None = None,
     ) -> None:
-        user_agent = user_agent or (
-            f"eudamed-toolkit/{__version__} (+https://github.com/Widaeus/eudamed-toolkit)"
-        )
-        if contact:
-            user_agent = f"{user_agent}; contact: {contact}"
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": user_agent})
+        self.session.headers.update(
+            {"User-Agent": _default_user_agent(contact, user_agent)}
+        )
         self.min_interval = min_interval
         self.timeout = timeout
         self.max_retries = max_retries
@@ -118,13 +116,19 @@ class DataLakeClient:
         """Issue one throttled, retried, logged GET and return the response body.
 
         Isolated from `fetch` so tests can replace it without a network call.
-        Returns an empty string on any outcome that should read as "no rows" —
-        a non-retryable HTTP error, an empty body, or exhausted retries — so
-        `fetch` has a single place to interpret an empty result.
+        Returns the body — including an empty one, which is this endpoint's
+        legitimate way of saying "no rows match". Any outcome that means the
+        query was *not answered* — a non-retryable HTTP error, a transport
+        failure, exhausted retries — raises ``RequestFailed`` instead, because
+        an outage returned as an empty body is indistinguishable from a
+        manufacturer with no registrations.
         """
         endpoint = params.get("_endpoint", "udi")
         query = {k: v for k, v in params.items() if k != "_endpoint"}
         url = f"{BASE}/{str(endpoint).lstrip('/')}"
+        last_status: int | None = None
+        last_error: str | None = None
+        attempt = 0
 
         for attempt in range(self.max_retries):
             self._throttle()
@@ -133,6 +137,7 @@ class DataLakeClient:
                 resp = self.session.get(url, params=query, timeout=self.timeout)
             except requests.RequestException as exc:
                 log.warning("%s: %s (attempt %d)", type(exc).__name__, exc, attempt)
+                last_error = f"{type(exc).__name__}: {exc}"
                 time.sleep(min(2**attempt, 30))
                 continue
 
@@ -144,16 +149,21 @@ class DataLakeClient:
                     "elapsed_s": round(time.time() - started, 3),
                 }) + "\n")
 
+            last_status = resp.status_code
             if resp.status_code == 429 or resp.status_code >= 500:
                 time.sleep(min(2**attempt * 3, 60))
                 continue
             if resp.status_code != 200:
                 log.warning("HTTP %s for %s", resp.status_code, query)
-                return ""
+                raise RequestFailed(
+                    url, query, status=resp.status_code, attempts=attempt + 1
+                )
             return resp.text
 
         log.error("gave up on %s", query)
-        return ""
+        raise RequestFailed(
+            url, query, status=last_status, attempts=attempt + 1, reason=last_error
+        )
 
     def fetch(self, endpoint: str = "udi", **filters: Any) -> Result:
         """One Data Lake query. Raises on a filter known to be inert or unverified.
@@ -162,6 +172,10 @@ class DataLakeClient:
         read as "no such devices" instead of "that parameter does nothing". An
         unverified filter is refused for the same reason: an empty result and a
         parameter that was never checked are indistinguishable from here.
+
+        A query the service could not answer raises ``RequestFailed``. Only a
+        query the service *did* answer, with no matching rows, comes back as an
+        empty ``Result``.
         """
         bad = {k for k in filters if k in INERT_FILTERS}
         if bad:
@@ -211,7 +225,15 @@ class DataLakeClient:
         return self.fetch("udi", BASIC_UDI=basic_udi)
 
     def harvest(self, srns: Iterable[str], out_path: Path, workers: int = 4) -> dict[str, Any]:
-        """Pull every manufacturer's records to JSONL. Resumable by SRN."""
+        """Pull every manufacturer's records to JSONL. Resumable by SRN.
+
+        A manufacturer whose query failed is recorded in ``failed_srns`` and
+        counted separately from those actually pulled, because reporting a
+        failed pull as a manufacturer with zero devices makes the gap
+        invisible. The resume set is taken from the SRNs present in the output
+        file, so a failed manufacturer -- like one that genuinely has no rows
+        -- is attempted again on the next run.
+        """
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         done: set[str] = set()
@@ -226,7 +248,9 @@ class DataLakeClient:
         todo = [s for s in dict.fromkeys(srns) if s and s not in done]
         log.info("data lake harvest: %d manufacturers to pull, %d cached",
                  len(todo), len(done))
-        written, truncated = 0, []
+        written, pulled = 0, 0
+        truncated: list[str] = []
+        failed: list[str] = []
         with out_path.open("a", encoding="utf-8") as fh, ThreadPoolExecutor(workers) as pool:
             futures = {pool.submit(self.by_manufacturer, s): s for s in todo}
             for i, fut in enumerate(as_completed(futures), 1):
@@ -235,7 +259,9 @@ class DataLakeClient:
                     res = fut.result()
                 except Exception as exc:  # noqa: BLE001
                     log.warning("harvest failed for %s: %s", srn, exc)
+                    failed.append(srn)
                     continue
+                pulled += 1
                 if res.truncated:
                     truncated.append(srn)
                 for row in res.rows:
@@ -248,5 +274,12 @@ class DataLakeClient:
         if truncated:
             log.warning("%d manufacturers hit the row cap and are INCOMPLETE: %s",
                         len(truncated), truncated[:10])
-        return {"manufacturers_pulled": len(todo), "rows_written": written,
+        if failed:
+            log.error("%d of %d manufacturers could not be pulled and are MISSING "
+                      "from the output: %s", len(failed), len(todo), failed[:10])
+        return {"manufacturers_requested": len(todo),
+                "manufacturers_pulled": pulled,
+                "manufacturers_failed": len(failed),
+                "failed_srns": failed,
+                "rows_written": written,
                 "truncated_srns": truncated}
