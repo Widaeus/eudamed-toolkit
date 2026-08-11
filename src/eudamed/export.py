@@ -168,7 +168,7 @@ def _stream_pages_to_jsonl(
 
     After each completed page the file is flushed and ``progress_path`` is
     updated with the next page to fetch, the byte length written so far, and
-    the uuids of the page just written. An interrupted crawl therefore leaves
+    the uuids the page just handled was served. An interrupted crawl leaves
     both files behind rather than cleaning up after itself, and a later call
     with ``resume=True`` truncates the partial file back to the last
     page-aligned byte offset -- discarding any records from the page that was
@@ -178,7 +178,7 @@ def _stream_pages_to_jsonl(
     endpoint offers no server-side sort, and the register changes daily, so
     page boundaries do not hold between runs: one device registered or
     withdrawn during the pause shifts every later record by one position.
-    Skipping the uuids of the last page written catches drift smaller than a
+    Skipping the uuids the last page was served catches drift smaller than a
     page, which is the common case. Drift of a page or more will duplicate
     records that moved forwards and lose records that moved backwards, and
     nothing available from this API can detect that it happened -- there is no
@@ -212,7 +212,12 @@ def _stream_pages_to_jsonl(
         for page_no, content in _iter_pages(
             client, identity["page_size"], identity["filters"], start_page
         ):
-            page_uuids: list[str] = []
+            # The seam is a property of the page as *served*, not of the
+            # records this run happened to write. A resumed page whose every
+            # record was skipped writes nothing, and recording the written
+            # records would store an empty seam -- leaving the next resume
+            # with no guard at all, and writing those records twice.
+            page_uuids = [r["uuid"] for r in content if r.get("uuid") is not None]
             for record in content:
                 uuid = record.get("uuid")
                 if uuid is not None and uuid in skip:
@@ -225,8 +230,6 @@ def _stream_pages_to_jsonl(
                 fh.write(line)
                 written += len(line)
                 n += 1
-                if uuid is not None:
-                    page_uuids.append(uuid)
                 if progress is not None:
                     progress(n)
             # The guard applies to the first page fetched after a resume only:
@@ -247,15 +250,6 @@ def _stream_pages_to_jsonl(
 
 
 # --------------------------------------------------------------------- writers
-
-
-def _write_jsonl(records: Iterator[dict[str, Any]], out: Path) -> int:
-    n = 0
-    with out.open("w", encoding="utf-8") as fh:
-        for record in records:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            n += 1
-    return n
 
 
 def _scan_fieldnames(buffer: Path) -> list[str]:
@@ -297,15 +291,6 @@ def _csv_from_buffer(buffer: Path, out: Path) -> None:
         for line in fh:
             writer.writerow(json.loads(line))
     tmp_out.replace(out)
-
-
-def _write_csv(records: Iterator[dict[str, Any]], out: Path) -> int:
-    """Buffer to a temporary JSONL file, then write the CSV from it."""
-    buffer = out.with_suffix(out.suffix + ".buffer.jsonl")
-    n = _write_jsonl(records, buffer)
-    _csv_from_buffer(buffer, out)
-    buffer.unlink()
-    return n
 
 
 # Rows held in memory at once while writing a Parquet row group. An unfiltered
@@ -380,17 +365,6 @@ def _parquet_from_buffer(
     finally:
         writer.close()
     tmp_out.replace(out)
-
-
-def _write_parquet(
-    records: Iterator[dict[str, Any]], out: Path, batch_size: int = _PARQUET_BATCH_SIZE
-) -> int:
-    """Buffer to a temporary JSONL file, then stream it into Parquet row groups."""
-    buffer = out.with_suffix(out.suffix + ".buffer.jsonl")
-    n = _write_jsonl(records, buffer)
-    _parquet_from_buffer(buffer, out, batch_size)
-    buffer.unlink()
-    return n
 
 
 # ---------------------------------------------------------------------- export

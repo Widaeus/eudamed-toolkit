@@ -9,7 +9,7 @@ import sys
 import pytest
 
 from eudamed.errors import RequestFailed
-from eudamed.export import FORMATS, _write_parquet, export_devices
+from eudamed.export import FORMATS, _parquet_from_buffer, export_devices
 
 
 class _PagingClient:
@@ -212,10 +212,11 @@ def test_parquet_export_streams_row_groups_instead_of_materialising_everything(t
     the observable trace that batching actually happened."""
     pq = pytest.importorskip("pyarrow.parquet")
 
-    records = ({"uuid": str(i)} for i in range(5))
+    buffer = tmp_path / "batched.buffer.jsonl"
+    buffer.write_text("".join(json.dumps({"uuid": str(i)}) + "\n" for i in range(5)))
     out = tmp_path / "batched.parquet"
-    n = _write_parquet(records, out, batch_size=2)
-    assert n == 5
+    _parquet_from_buffer(buffer, out, batch_size=2)
+    assert pq.read_table(out).num_rows == 5
     assert pq.ParquetFile(out).metadata.num_row_groups == 3
 
 
@@ -319,6 +320,46 @@ def test_a_record_duplicated_across_the_seam_is_written_once(tmp_path):
     assert report["records"] == 3
 
 
+def test_a_fully_repeated_page_still_defines_the_seam_for_the_next_resume(tmp_path):
+    """The guard has to survive a resume that writes nothing.
+
+    If the seam is recorded from the records *written* rather than the records
+    *served*, a resumed page whose every record was skipped stores an empty
+    seam -- and the resume after that has no guard at all, so the records it
+    was meant to skip are written a second time. Three runs are the shortest
+    sequence that exposes it: write, resume onto a fully-repeated page, resume
+    again.
+    """
+    out = tmp_path / "devices.jsonl"
+    ab = [{"uuid": "a"}, {"uuid": "b"}]
+
+    first = _ResumableClient([list(ab)], fail_on=[1])
+    with pytest.raises(RequestFailed):
+        export_devices(first, out, fmt="jsonl")
+
+    # Page 1 now repeats page 0 in full: every record is skipped, nothing is
+    # written, and the crawl dies again before reaching page 2.
+    second = _ResumableClient([list(ab), list(ab)], fail_on=[2])
+    with pytest.raises(RequestFailed):
+        export_devices(second, out, fmt="jsonl", resume=True)
+
+    checkpoint = json.loads((tmp_path / "devices.jsonl.progress.json").read_text())
+    assert checkpoint["records_written"] == 2
+    assert checkpoint["last_page_uuids"] == ["a", "b"]
+
+    third = _ResumableClient(
+        [list(ab), list(ab), [{"uuid": "a"}, {"uuid": "b"},
+                              {"uuid": "c"}, {"uuid": "d"}]]
+    )
+    report = export_devices(third, out, fmt="jsonl", resume=True)
+
+    written = _uuids(out)
+    assert written == sorted(set(written))
+    assert written == ["a", "b", "c", "d"]
+    assert report["records"] == 4
+    assert report["resume_points"] == 2
+
+
 def test_resuming_with_different_filters_refuses_and_names_the_field(tmp_path):
     """Resuming one query into another query's output file would blend two
     result sets into one file carrying one manifest."""
@@ -346,6 +387,36 @@ def test_resuming_with_a_different_format_refuses_and_names_the_field(tmp_path):
     with pytest.raises(ValueError, match="fmt"):
         export_devices(
             _ResumableClient([[{"uuid": "a"}]]), out, fmt="csv", resume=True,
+        )
+
+
+def test_resuming_with_a_different_page_size_refuses_and_names_the_field(tmp_path):
+    """Page size decides where every boundary falls, so a checkpoint's page
+    numbers mean nothing under a different one."""
+    out = tmp_path / "devices.jsonl"
+    with pytest.raises(RequestFailed):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]], fail_on=[1]), out, page_size=300,
+        )
+
+    with pytest.raises(ValueError, match="page_size"):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]]), out, resume=True, page_size=50,
+        )
+
+
+def test_resuming_with_a_different_enrich_setting_refuses_and_names_the_field(tmp_path):
+    """Half the file carrying the Basic UDI-DI fields and half not is a ragged
+    extract that nothing on disk would explain."""
+    out = tmp_path / "devices.jsonl"
+    with pytest.raises(RequestFailed):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]], fail_on=[1]), out, enrich=False,
+        )
+
+    with pytest.raises(ValueError, match="enrich"):
+        export_devices(
+            _ResumableClient([[{"uuid": "a"}]]), out, resume=True, enrich=True,
         )
 
 
