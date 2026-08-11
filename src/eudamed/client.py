@@ -8,6 +8,11 @@ parameter is ignored silently and returns the whole register with a 200.
 
 Every request is appended to a JSONL run log so that an extraction can be
 reconstructed and audited after the fact.
+
+A request that cannot be answered raises ``RequestFailed``; only EUDAMED's
+"no such record" redirect returns ``None``. The two are never conflated: a
+page that failed to load is not an empty page, and a count that could not be
+taken is not a count of zero.
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ from typing import Any
 
 import requests
 
-from eudamed import __version__
+from eudamed import user_agent as _default_user_agent
+from eudamed.errors import RequestFailed
 
 BASE = "https://ec.europa.eu/tools/eudamed/api"
 
@@ -94,12 +100,10 @@ class EudamedClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.session = requests.Session()
-        user_agent = user_agent or (
-            f"eudamed-toolkit/{__version__} (+https://github.com/Widaeus/eudamed-toolkit)"
-        )
-        if contact:
-            user_agent = f"{user_agent}; contact: {contact}"
-        self.session.headers.update({"Accept": "application/json", "User-Agent": user_agent})
+        self.session.headers.update({
+            "Accept": "application/json",
+            "User-Agent": _default_user_agent(contact, user_agent),
+        })
         self._gate = threading.Lock()
         self._next_allowed = 0.0
 
@@ -162,10 +166,17 @@ class EudamedClient:
     def get(
         self, path: str, params: dict[str, Any] | None = None, use_cache: bool = True
     ) -> dict[str, Any] | None:
-        """GET a JSON endpoint. Returns ``None`` when the record is unavailable.
+        """GET a JSON endpoint. Returns ``None`` only when the record does not exist.
 
         EUDAMED answers "no such record" with a 302 to its page-not-found route
-        rather than a 404, so a redirect to HTML is treated as a miss.
+        rather than a 404, so a redirect to HTML is treated as a miss -- and
+        that is the *only* condition under which this returns ``None``.
+
+        Every other unhappy outcome -- an HTTP error, a body that is not JSON,
+        a transport failure, retries exhausted -- raises ``RequestFailed``.
+        Returning ``None`` for those would hand callers an object that reads
+        exactly like an empty register, which is the failure this package
+        exists to prevent.
         """
         params = dict(params or {})
         key = self._cache_key(path, params)
@@ -181,6 +192,8 @@ class EudamedClient:
 
         url = f"{BASE}/{path.lstrip('/')}"
         last_error: str | None = None
+        last_status: int | None = None
+        attempt = 0
 
         for attempt in range(self.max_retries):
             self._throttle()
@@ -214,9 +227,15 @@ class EudamedClient:
                 try:
                     data = resp.json()
                 except ValueError:
+                    # A 200 carrying something other than JSON is the API's
+                    # other way of failing without saying so; it is a failed
+                    # request, not an empty one.
                     record["outcome"] = "non_json_200"
                     self.run_log.write(record)
-                    return None
+                    raise RequestFailed(
+                        url, params, status=200, attempts=attempt + 1,
+                        reason="response body is not JSON",
+                    ) from None
                 record["outcome"] = "ok"
                 self.run_log.write(record)
                 self._note_success()
@@ -230,6 +249,7 @@ class EudamedClient:
             record["outcome"] = "rate_limited" if resp.status_code == 429 else "http_error"
             self.run_log.write(record)
             last_error = f"HTTP {resp.status_code}"
+            last_status = resp.status_code
 
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
@@ -242,17 +262,27 @@ class EudamedClient:
             if resp.status_code in (500, 502, 503, 504):
                 time.sleep(min(2**attempt * 2, 60))
                 continue
-            return None
+            raise RequestFailed(
+                url, params, status=resp.status_code, attempts=attempt + 1
+            )
 
         log.warning("giving up on %s %s (%s)", url, params, last_error)
-        return None
+        raise RequestFailed(
+            url, params, status=last_status, attempts=attempt + 1, reason=last_error
+        )
 
     # ------------------------------------------------------------------- search
 
     def search_devices(
         self, page: int = 0, page_size: int = 300, **filters: Any
-    ) -> dict[str, Any] | None:
-        """One page of the UDI-DI search endpoint."""
+    ) -> dict[str, Any]:
+        """One page of the UDI-DI search endpoint.
+
+        Always returns the page envelope, or raises. The search endpoint has
+        no "not found" answer -- a query matching nothing returns an envelope
+        with an empty ``content`` and ``totalElements: 0`` -- so anything that
+        is not an envelope is a failed request, and is raised as one.
+        """
         unknown = set(filters) - VERIFIED_DEVICE_FILTERS
         if unknown:
             raise ValueError(
@@ -270,22 +300,45 @@ class EudamedClient:
         # Search pages are volatile (the register changes daily); never cache
         # them -- a caller that wants a durable snapshot should persist them
         # itself.
-        return self.get("devices/udiDiData", params, use_cache=False)
+        page_data = self.get("devices/udiDiData", params, use_cache=False)
+        if page_data is None:
+            # A redirect from the search endpoint is not "no such record":
+            # there is no record being asked for. Treat it as a failure.
+            raise RequestFailed(
+                f"{BASE}/devices/udiDiData", params, status=302, attempts=1,
+                reason="search endpoint redirected instead of returning a page",
+            )
+        return page_data
 
     def count_devices(self, **filters: Any) -> int:
+        """``totalElements`` for a filtered search.
+
+        Zero is returned only when the register answered and said zero. A
+        count that could not be taken raises, because a zero written into a
+        results table is a claim about the register, not about the network.
+        """
         page = self.search_devices(page=0, page_size=1, **filters)
-        return int(page["totalElements"]) if page else 0
+        return int(page["totalElements"])
 
     def iter_devices(
         self, page_size: int = 300, max_pages: int | None = None, **filters: Any
     ) -> Iterator[dict[str, Any]]:
-        """Yield UDI-DI records across all pages of a filtered search."""
+        """Yield UDI-DI records across all pages of a filtered search.
+
+        A page that cannot be fetched raises ``RequestFailed`` rather than
+        ending the iteration: a consumer streaming this to disk cannot tell a
+        finished crawl from an abandoned one, and a partial extract that looks
+        complete is worse than no extract. A search that genuinely matches
+        nothing returns without yielding, which is a different thing and stays
+        different.
+        """
         page_no = 0
         while True:
             page = self.search_devices(page=page_no, page_size=page_size, **filters)
-            if not page or not page.get("content"):
+            content = page.get("content") or []
+            if not content:
                 return
-            yield from page["content"]
+            yield from content
             if page.get("last") or (max_pages and page_no + 1 >= max_pages):
                 return
             page_no += 1
