@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from eudamed.nomenclature import sweep, terminal_codes, walk
 
 
@@ -104,3 +106,65 @@ def test_walk_stops_expanding_past_max_depth():
     # child C is never fetched or seen.
     assert [n["code"] for n in nodes] == ["A", "B"]
     assert "b" not in client.calls
+
+
+class _PayloadClient:
+    """A fake nomenclature source returning an arbitrary raw payload per id,
+    for exercising shape handling rather than tree structure."""
+
+    def __init__(self, payloads):
+        self.payloads = payloads
+        self.calls = []
+
+    def nomenclature_children(self, cnd_uuid):
+        self.calls.append(cnd_uuid)
+        return self.payloads.get(cnd_uuid)
+
+
+def test_walk_accepts_children_keyed_cnd_uuid():
+    """The endpoint's own path parameter is named 'cndUuid'
+    (GET /devices/nomenclatures/{cndUuid}/children); a response that uses
+    that name for the child's id must not be silently dropped."""
+    payloads = {None: [{"cndUuid": "z", "code": "Z"}], "z": []}
+    client = _PayloadClient(payloads)
+    assert list(walk(client)) == [{"cndUuid": "z", "code": "Z", "depth": 1}]
+
+
+def test_walk_raises_on_a_node_with_no_recognisable_id_key():
+    payloads = {None: [{"code": "Z", "term": "branch"}]}
+    client = _PayloadClient(payloads)
+    with pytest.raises(ValueError) as excinfo:
+        list(walk(client))
+    assert "code" in str(excinfo.value)
+    assert "term" in str(excinfo.value)
+
+
+def test_walk_accepts_a_paged_content_envelope():
+    """The device search endpoint's page envelope -- {"content": [...]} -- is
+    the likely alternative shape for this endpoint too."""
+    payloads = {None: {"content": [{"uuid": "z", "code": "Z"}], "totalElements": 1}}
+    client = _PayloadClient(payloads)
+    assert list(walk(client)) == [{"uuid": "z", "code": "Z", "depth": 1}]
+
+
+def test_walk_accepts_a_children_envelope():
+    payloads = {None: {"children": [{"uuid": "z", "code": "Z"}]}}
+    client = _PayloadClient(payloads)
+    assert list(walk(client)) == [{"uuid": "z", "code": "Z", "depth": 1}]
+
+
+def test_walk_raises_type_error_on_an_unrecognised_payload_shape():
+    payloads = {None: "oops"}
+    client = _PayloadClient(payloads)
+    with pytest.raises(TypeError) as excinfo:
+        list(walk(client))
+    assert "str" in str(excinfo.value)
+    assert "oops" in str(excinfo.value)
+
+
+def test_walk_raises_type_error_on_a_dict_without_a_known_list_key():
+    payloads = {None: {"totalElements": 0}}
+    client = _PayloadClient(payloads)
+    with pytest.raises(TypeError) as excinfo:
+        list(walk(client))
+    assert "totalElements" in str(excinfo.value)
