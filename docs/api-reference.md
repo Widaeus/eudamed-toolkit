@@ -119,8 +119,8 @@ Always-required (the endpoint 400s without them):
 | `name` | substring over a concatenated name field | see caveat below |
 | `primaryDi` | exact | |
 | `basicUdi` | exact | |
-| `deviceTypes` | full refdata code | e.g. `refdata.special-mdr-device-type.software` |
-| `deviceCriteria` | exact | `STANDARD` (MDR) or `LEGACY` (Art. 120 MDD/AIMDD transitional) |
+| `deviceTypes` | full refdata code | `refdata.special-mdr-device-type.software` → 4,726 UDI-DIs; `refdata.special-ivd-device-type.software` → 687 UDI-DIs (2026-07-30) |
+| `deviceCriteria` | exact | `STANDARD` (MDR) → 2,279,179; `LEGACY` (Art. 120 MDD/AIMDD transitional) → 651,311 (2026-07-30) |
 
 The `cndCode=Z1203` figures above are not a typo repeated twice: they are the
 same query, three weeks apart. The register is a live, growing dataset, not a
@@ -225,6 +225,7 @@ recovered. This package's client does exactly this.
 
 Practical rates: about 1 request per second is sustainable for the detail
 endpoints; 4 per second is not. Paging the whole 2.98 M-record register at 300 per
-page is roughly 10,000 requests, and a single EMDN-filtered branch can be as
-small as a few hundred. Budget accordingly, and be conservative — this is
-shared public infrastructure.
+page is roughly 10,000 requests; paging a full EMDN branch filtered by
+`cndCode` took roughly 690 requests at 300 records per page (measured
+2026-07-29). Budget accordingly, and be conservative — this is shared public
+infrastructure.
