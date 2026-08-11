@@ -52,3 +52,59 @@ def test_a_failed_fetch_yields_an_empty_map_not_a_crash(monkeypatch):
     monkeypatch.setattr("eudamed.reference._get_csv", boom)
     maps = ReferenceMaps.load(cache=None)
     assert maps.risk_class("-204") == "-204"
+
+
+def test_a_corrupt_cache_falls_back_to_fetching(tmp_path, monkeypatch):
+    """A process killed mid-write can leave a truncated cache file. That must
+    read as 'no cache' rather than crash every subsequent load()."""
+    monkeypatch.setattr("eudamed.reference._get_csv", lambda code, session=None: CSV)
+    cache = tmp_path / "reference_values.json"
+    cache.write_text("{not valid json at all", encoding="utf-8")
+
+    maps = ReferenceMaps.load(cache=cache)
+
+    assert maps.risk_class("-204") == "Class IIa"
+    assert maps.risk_class("-205") == "Class IIb"
+
+
+def test_a_failed_fetch_does_not_poison_the_cache(tmp_path, monkeypatch):
+    """A transient outage on a fresh build must not permanently write 'no
+    data' to the cache -- that would make every later load() decode risk
+    classes as raw integers forever, which is exactly what this module exists
+    to prevent."""
+    cache = tmp_path / "reference_values.json"
+
+    def boom(code, session=None):
+        raise OSError("network down")
+
+    monkeypatch.setattr("eudamed.reference._get_csv", boom)
+    failed = ReferenceMaps.load(cache=cache)
+
+    assert not cache.exists()
+    assert failed.risk_class("-204") == "-204"
+
+    monkeypatch.setattr("eudamed.reference._get_csv", lambda code, session=None: CSV)
+    recovered = ReferenceMaps.load(cache=cache)
+
+    assert recovered.risk_class("-204") == "Class IIa"
+
+
+def test_a_successful_fetch_still_writes_the_cache(tmp_path, monkeypatch):
+    """Regression guard for the two fixes above: a clean fetch must still be
+    cached, and a second load() must still avoid re-fetching."""
+    calls = []
+
+    def fake(code, session=None):
+        calls.append(code)
+        return CSV
+
+    monkeypatch.setattr("eudamed.reference._get_csv", fake)
+    cache = tmp_path / "reference_values.json"
+
+    ReferenceMaps.load(cache=cache)
+    assert cache.exists()
+    first = len(calls)
+
+    maps = ReferenceMaps.load(cache=cache)
+    assert len(calls) == first
+    assert maps.risk_class("-204") == "Class IIa"

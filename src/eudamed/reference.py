@@ -17,6 +17,8 @@ import csv
 import io
 import json
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +64,36 @@ def _parse_english(csv_text: str) -> dict[str, str]:
     return values
 
 
+def _read_cache(cache: Path) -> dict[str, dict[str, str]] | None:
+    """The cached maps, or ``None`` if the file is missing or unreadable.
+
+    A process killed mid-write can leave a truncated file. That must read as
+    "no cache" rather than raise, or a rebuild would need someone to delete
+    the file by hand before it worked offline again.
+    """
+    try:
+        loaded: dict[str, dict[str, str]] = json.loads(cache.read_text(encoding="utf-8"))
+        return loaded
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("cache %s is unreadable (%s); refetching", cache, exc)
+        return None
+
+
+def _write_cache_atomic(cache: Path, maps: dict[str, dict[str, str]]) -> None:
+    """Write ``maps`` to ``cache`` so a killed process can never leave a
+    half-written file: write to a temp file in the same directory, then
+    ``os.replace`` it into place, which is atomic on POSIX and Windows."""
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=cache.parent, prefix=cache.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(maps, indent=1))
+        os.replace(tmp_name, cache)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
 @dataclass
 class ReferenceMaps:
     """English labels for the reference IDs EUDAMED never explains inline."""
@@ -92,11 +124,17 @@ class ReferenceMaps:
 
         A fetch failure yields an empty map for that code rather than raising,
         so a rebuild from cache works even when the register is unreachable.
+        That empty result is never itself cached: a transient outage on a
+        fresh build must not permanently poison the cache with "no data" that
+        every later `load()` would then treat as authoritative.
         """
         if cache is not None and cache.exists():
-            return cls(json.loads(cache.read_text(encoding="utf-8")))
+            cached = _read_cache(cache)
+            if cached is not None:
+                return cls(cached)
 
         maps: dict[str, dict[str, str]] = {}
+        fetch_failed = False
         for code in REFERENCE_CODES:
             try:
                 maps[code] = _parse_english(_get_csv(code))
@@ -104,9 +142,14 @@ class ReferenceMaps:
             except (requests.RequestException, OSError, ValueError, KeyError) as exc:
                 log.warning("could not fetch reference %s: %s", code, exc)
                 maps[code] = {}
+                fetch_failed = True
 
         if cache is not None:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps(maps, indent=1), encoding="utf-8")
+            if fetch_failed:
+                log.warning(
+                    "not writing cache %s: at least one reference fetch failed", cache
+                )
+            else:
+                _write_cache_atomic(cache, maps)
 
         return cls(maps)
