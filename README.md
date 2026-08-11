@@ -75,8 +75,14 @@ could not find out*:
   `Result`; one that could not be run raises, and `harvest` reports it under
   `failed_srns` rather than counting it as pulled.
 
+`eudamed reference` is the deliberate exception: a failed fetch there yields
+an empty map for that code rather than raising, because an unrecognised id
+then falls back to the raw id, which is visibly not a label, so nothing
+downstream is silently wrong — and it lets a rebuild run offline from cache.
+
 The CLI exits 0 on success, 1 for a record that does not exist, 2 for a usage
-error and **3 for a request that failed**, so a script can tell "nothing is
+error and **3 for a request that failed**, except `reference`, which exits 0
+even under total network failure. A script can otherwise tell "nothing is
 there" from "we could not find out".
 
 ## EMDN traversal is unverified

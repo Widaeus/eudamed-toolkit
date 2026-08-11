@@ -26,11 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and a live walk currently raises `RequestFailed`. `sweep` goes through the
   device search endpoint and is unaffected.
 - `eudamed.errors` — `EudamedError` and `RequestFailed`, raised whenever a
-  request could not be answered. No module in this package turns a failed
-  request into an empty result: an empty search, a zero count and a
-  manufacturer with no registrations are real answers, and an outage is not
-  reported as any of them. The CLI exits 3 on a failed request, distinct from
-  1 for a record that does not exist.
+  request could not be answered. Every module but one turns a failed request
+  into `RequestFailed` rather than an empty result: an empty search, a zero
+  count and a manufacturer with no registrations are real answers, and an
+  outage is not reported as any of them. The deliberate exception is
+  `eudamed.reference`, which catches a failed fetch and returns an empty map
+  for that code instead — an unrecognised id then comes back as the raw id,
+  which reads as obviously not a label, rather than a wrong one that looks
+  right. The CLI exits 3 on a failed request except for `reference`, distinct
+  from 1 for a record that does not exist.
 - `eudamed.export` — streams a filtered device search to JSONL, CSV or
   Parquet without holding the result set in memory, writing
   `<out>.manifest.json` alongside the output. The manifest is named after the
