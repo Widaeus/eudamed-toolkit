@@ -24,7 +24,7 @@ dependencies = ["requests>=2.31"]
 
 [project.optional-dependencies]
 parquet = ["pandas>=2.0", "pyarrow>=14.0"]
-dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pandas>=2.0"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pandas>=2.0", "pyarrow>=14.0"]
 
 [project.scripts]
 eudamed = "eudamed.cli:main"

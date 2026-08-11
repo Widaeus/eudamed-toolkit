@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import csv as csv_module
 import json
+import sys
 
 import pytest
 
-from eudamed.export import FORMATS, export_devices
+from eudamed.export import FORMATS, _write_parquet, export_devices
 
 
 class _PagingClient:
@@ -112,3 +114,71 @@ def test_a_mid_export_failure_does_not_leave_a_half_written_csv(tmp_path):
     with pytest.raises(RuntimeError):
         export_devices(_FailingClient(), out, fmt="csv")
     assert not out.exists()
+
+
+def test_a_second_pass_csv_failure_does_not_leave_a_complete_looking_file(
+    tmp_path, monkeypatch
+):
+    """The buffering pass and the CSV-writing pass are two different pieces of
+    code with two different failure points. A failure injected in the first
+    (as above, via `_FailingClient`) never reaches the second, where the CSV
+    file at `out` is actually produced -- so it cannot exercise the guard that
+    keeps a failure there from leaving a partial file at the destination
+    path. This fails a row partway through the second pass instead."""
+    calls = {"n": 0}
+    original_writerow = csv_module.DictWriter.writerow
+
+    def _flaky_writerow(self, rowdict):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("disk full")
+        return original_writerow(self, rowdict)
+
+    monkeypatch.setattr(csv_module.DictWriter, "writerow", _flaky_writerow)
+
+    client = _PagingClient([[{"uuid": "a"}, {"uuid": "b"}, {"uuid": "c"}]])
+    out = tmp_path / "devices.csv"
+    with pytest.raises(RuntimeError):
+        export_devices(client, out, fmt="csv")
+    assert not out.exists()
+
+
+def test_parquet_export_round_trips_ragged_records(tmp_path):
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    client = _PagingClient([[{"uuid": "a"}, {"uuid": "b", "tradeName": "Widget"}]])
+    out = tmp_path / "devices.parquet"
+    report = export_devices(client, out, fmt="parquet")
+
+    table = pq.read_table(out)
+    assert report["records"] == 2
+    assert set(table.column_names) >= {"uuid", "tradeName"}
+    rows = table.to_pylist()
+    assert rows[0]["uuid"] == "a"
+    assert rows[0]["tradeName"] is None
+    assert rows[1] == {"uuid": "b", "tradeName": "Widget"}
+
+
+def test_parquet_export_streams_row_groups_instead_of_materialising_everything(tmp_path):
+    """The whole point of writing Parquet with `pyarrow.parquet.ParquetWriter`
+    rather than a single `pandas.DataFrame` is that a batch, not the full
+    record set, is what ever sits in memory. Multiple row groups on disk is
+    the observable trace that batching actually happened."""
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    records = ({"uuid": str(i)} for i in range(5))
+    out = tmp_path / "batched.parquet"
+    n = _write_parquet(records, out, batch_size=2)
+    assert n == 5
+    assert pq.ParquetFile(out).metadata.num_row_groups == 3
+
+
+def test_parquet_export_raises_a_clear_error_when_pyarrow_is_absent(tmp_path, monkeypatch):
+    """Simulated rather than relying on an uninstalled package: setting a
+    module to `None` in `sys.modules` makes the interpreter raise
+    `ImportError` on import, exactly as it would for a genuinely missing
+    dependency."""
+    monkeypatch.setitem(sys.modules, "pyarrow", None)
+    client = _PagingClient([[{"uuid": "a"}]])
+    with pytest.raises(ImportError, match="parquet"):
+        export_devices(client, tmp_path / "d.parquet", fmt="parquet")
