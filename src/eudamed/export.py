@@ -1,6 +1,6 @@
 """Streaming exports of filtered device searches to JSONL, CSV or Parquet.
 
-The unfiltered register is over three million UDI-DI records; nothing here holds a
+The unfiltered register runs to millions of UDI-DI records; nothing here holds a
 result set in memory. Pages are walked one at a time and written as they
 arrive. JSONL is written straight through, one line per record. CSV cannot be
 streamed directly because the records are ragged -- a field present on one
@@ -25,7 +25,7 @@ unrelated file sitting next to the output, which is slow on a large tree and
 discloses filenames that are nobody's business.
 
 Each completed page also updates ``<out>.progress.json``, so a crawl that
-dies at page 140 of 149 can be restarted from page 140 with ``resume=True``
+dies one page short of the end can be restarted at that page with ``resume=True``
 rather than from the beginning. This is a saving of requests, not a
 guarantee of coherence: see ``export_devices`` for what a resumed extract is
 and is not.
@@ -294,7 +294,7 @@ def _csv_from_buffer(buffer: Path, out: Path) -> None:
 
 
 # Rows held in memory at once while writing a Parquet row group. An unfiltered
-# export is over three million records; this keeps memory bounded to one batch
+# export is millions of records; this keeps memory bounded to one batch
 # regardless of how large the export is.
 _PARQUET_BATCH_SIZE = 50_000
 
@@ -383,7 +383,7 @@ def export_devices(
     """Stream a filtered device search to disk and record it in a manifest.
 
     Pages are written as they arrive rather than accumulated -- an unfiltered
-    export is over three million records and will not fit in memory. ``fmt`` selects
+    export is millions of records and will not fit in memory. ``fmt`` selects
     one of ``FORMATS``: JSONL streams straight through; CSV buffers to a
     temporary JSONL file and unions record keys in a second pass, because
     device records are ragged and a header taken from the first record would
@@ -396,8 +396,8 @@ def export_devices(
     merge in ``deviceName``, ``deviceCriterion`` and the certificate list, none
     of which the search endpoint returns. That is **one request per device**:
     fine for a filtered pull of a few thousand, but the difference between a
-    10,000-request export and a 3-million-request one is not visible in the
-    boolean, so filter before enabling it on anything close to the full
+    thousand-request export and a multi-million-request one is not visible in
+    the boolean, so filter before enabling it on anything close to the full
     register.
 
     Every completed page updates ``<out>.progress.json``. A crawl that raises

@@ -149,3 +149,4 @@ def test_reference_body_is_decoded_as_utf8_despite_the_missing_charset_header(
         headers={"Content-Type": "text/csv"},
     ))
     assert _get_csv("RISK_CLASS_ID") == body
+    assert fake_session.calls[0]["params"]["LANGUAGE"] == "en"

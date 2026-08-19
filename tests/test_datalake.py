@@ -37,8 +37,8 @@ def test_a_short_page_is_not_truncated(tmp_path, monkeypatch):
 def test_a_rejected_filter_raises_before_any_request(tmp_path):
     """DEVICE_CRITERION, DEVICE_STATUS_TYPE_ID, LATEST_VERSION and the boolean
     flag columns are columns of the export but not accepted as query
-    parameters: the service answers HTTP 400 with an empty body (verified
-    2026-08-19). Refusing them locally names the problem instead of surfacing
+    parameters: the service answers HTTP 400 with an empty body. Refusing
+    them locally names the problem instead of surfacing
     it as a failed request."""
     with pytest.raises(ValueError, match="DEVICE_CRITERION"):
         DataLakeClient(run_log=tmp_path / "dl.jsonl").fetch(DEVICE_CRITERION="LEGACY")

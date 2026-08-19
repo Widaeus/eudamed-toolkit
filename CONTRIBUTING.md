@@ -26,7 +26,7 @@ pytest
 requires evidence that it changes `totalElements` against the live API.** This
 is the one rule in this codebase that cannot be relaxed: the API silently
 ignores query parameters it does not recognise and returns the whole
-register — over three million UDI-DI records — with HTTP 200, so a filter added on the strength of
+register with HTTP 200, so a filter added on the strength of
 what a form field is *named*, rather than what it measurably does, turns
 every count taken with it into a false one.
 

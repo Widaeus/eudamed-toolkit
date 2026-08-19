@@ -20,7 +20,7 @@ returning a short answer, because a truncated pull that looks complete is the
 worst failure mode here.
 
 **Only some columns are accepted as filters, and the rest are refused with
-HTTP 400.** Verified 2026-08-19 by sending each of the 60 column names:
+HTTP 400.** Verified by sending each column name as a parameter:
 
 ===========================  ============  =====================================
 Parameter                    Match         Note
@@ -89,8 +89,9 @@ SPECIAL_DEVICE_TYPE = {
     "ivdd_software": -1202,  # legacy devices under the IVDD
 }
 
-# Columns the endpoint accepts as query parameters (verified 2026-08-19 by
-# sending each of the 60 column names and observing the rows returned).
+# Columns the endpoint accepts as query parameters (verified by sending each
+# column name and observing the rows returned; the set matches the
+# Commission's OpenAPI file for the endpoint).
 VERIFIED_FILTERS = frozenset({
     "MF_SRN", "BASIC_UDI", "PRIMARY_DI", "SPECIAL_DEVICE_TYPE_ID",
     "RISK_CLASS_ID", "APPLICABLE_LEGISLATION_ID", "PLACED_ON_THE_MARKET_ID",
@@ -271,7 +272,7 @@ class DataLakeClient:
         ``ivdr_software``, ``mdd_software`` or ``ivdd_software``. The MDR slice
         exceeds the 1,000-row cap, so use it for presence, not enumeration;
         enumerate by manufacturer via `by_manufacturer`, or split it on
-        ``RISK_CLASS_ID``. The other three were under the cap on 2026-08-19.
+        ``RISK_CLASS_ID``. The other three have fitted under the cap.
         """
         return self.fetch("udi", SPECIAL_DEVICE_TYPE_ID=SPECIAL_DEVICE_TYPE[kind])
 

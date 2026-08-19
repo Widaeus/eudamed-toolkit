@@ -21,7 +21,7 @@ under ``uuid``, ``cndUuid`` or ``id``; a node with none of those raises
 returning an integer.
 
 **Status of the underlying endpoint.** ``GET /devices/nomenclatures/``
-returned HTTP 500 for every form tried on 2026-08-11 (see
+returned HTTP 500 for every form tried (see
 ``docs/api-reference.md``), so a live traversal currently fails rather than
 succeeding. That failure propagates out of ``walk`` as ``RequestFailed``: an
 outage must not be indistinguishable from a tree with no nodes, which is

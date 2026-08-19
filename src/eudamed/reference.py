@@ -7,8 +7,9 @@ attempt guessed them and was wrong on every one — Class IIa is ``-204``, not
 written straight into a human-facing column without anything failing. This
 module fetches the register's own ``/reference`` endpoint instead.
 
-The endpoint returns every language in one response and caps at 1,000 rows,
-so it is queried one CODE at a time and filtered to English.
+The endpoint caps at 1,000 rows and, unless asked, returns every language
+in one response, so it is queried one CODE at a time with ``LANGUAGE=en``
+and filtered to English again on the way in.
 """
 
 from __future__ import annotations
@@ -59,7 +60,9 @@ def _get_csv(code: str, session: requests.Session | None = None) -> str:
     resp = http.get(
         REFERENCE_URL,
         timeout=60,
-        params={"api-version": "v1.0", "format": "csv", "CODE": code},
+        # LANGUAGE narrows the response server-side; the English filter in
+        # `_parse_english` stays as a guard should the parameter stop working.
+        params={"api-version": "v1.0", "format": "csv", "CODE": code, "LANGUAGE": "en"},
     )
     resp.raise_for_status()
     # Served as bare ``text/csv`` with no charset, so ``resp.text`` would be

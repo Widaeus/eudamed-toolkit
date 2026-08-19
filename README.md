@@ -1,209 +1,122 @@
 # eudamed-toolkit
 
-A rate-limited, logged client for the public read API behind EUDAMED, the EU
-database on medical devices, plus a client for the Commission's Data Lake bulk
-CSV endpoint and the tooling to turn either into a reproducible export.
+A rate-limited, logged Python client and CLI for the public read API behind
+EUDAMED, the EU database on medical devices, plus a client for the
+Commission's Data Lake bulk CSV endpoint and the tooling to turn either into
+a reproducible, resumable export with a provenance manifest.
 
-This is an **unofficial** client. The European Commission publishes no
-specification for the API this package talks to; everything it knows about
-that API's behaviour was established empirically against the live service and
-is documented in [`docs/api-reference.md`](docs/api-reference.md). This
-project is not affiliated with, endorsed by, or in any way connected to the
-European Commission.
+This is an **unofficial** client, not affiliated with, endorsed by or
+connected to the European Commission.
+
+## Why this exists
+
+The Commission publishes no documentation for the JSON API that the public
+EUDAMED interface calls. Its technical documentation page describes the
+registration side — data dictionary, XSD schemas, business rules — and links
+one OpenAPI file, which covers only the separate bulk (Data Lake) endpoint and
+names its parameters without describing their behaviour, the row cap or what
+the export omits. The one third-party write-up of the read API documents four
+operations and none of the query parameters that actually filter.
+
+Working from what is published, you would conclude the search endpoint cannot
+be filtered, would not know that a misspelled filter silently returns the
+whole register with HTTP 200, that `name=` searches the manufacturer's name,
+that a missing record is a 302 rather than a 404, or that a bulk response of
+exactly 1,000 rows is truncated. Each of those turns a query into a wrong
+number without an error. This package encodes what was established
+empirically against the live service — as an allow-list of verified filters,
+as failure modes that raise instead of returning plausible empties, and as
+two reference documents — so that the next person does not have to rediscover
+it, and so that a count taken from EUDAMED can be reconstructed and audited.
 
 ## Installation
 
 ```bash
 pip install eudamed-toolkit
+pip install eudamed-toolkit[parquet]   # Parquet export
 ```
 
-Parquet export needs an extra: `pip install eudamed-toolkit[parquet]`.
-
-## Quick start
+## Usage
 
 ```bash
-# How many UDI-DI records fall under EMDN branch Z1203?
-eudamed search --cnd-code Z1203 --count
-
-# Stream that same filtered set to a JSONL file. A manifest recording the
-# query and a SHA-256 of the output is written to z1203.jsonl.manifest.json,
-# named after the output so a second export into the same directory cannot
-# overwrite the first one's provenance.
-eudamed export z1203.jsonl --cnd-code Z1203
-
-# Look up one device by its UDI-DI uuid, and get the link into the public
-# interface for it.
-eudamed device 8dc77343-25b8-493b-b7f7-5c2bdebcf6b1
+eudamed search --cnd-code Z1203 --count           # count UDI-DIs in an EMDN branch
+eudamed export z1203.jsonl --cnd-code Z1203       # stream them, with a manifest
+eudamed export z1203.jsonl --cnd-code Z1203 --resume
+eudamed device <udi-di-uuid>                      # one record, with its interface URL
+eudamed reference                                 # decode reference-value ids
 ```
 
-## Resuming an interrupted export
+```python
+from eudamed.client import EudamedClient
+from eudamed.datalake import DataLakeClient
 
-A filtered export walks the search endpoint page by page, and a page that
-cannot be fetched raises rather than truncating the file silently — so a crawl
-that dies at page 140 of 149 would otherwise have to start again from page 0.
-Each completed page is recorded in `<out>.progress.json`, and `--resume`
-carries on from the next unfetched page:
+api = EudamedClient(contact="you@example.org")
+n = api.count_devices(cndCode="Z1203", riskClassCode="refdata.risk-class.class-iib")
+page = api.search_devices(page=0, page_size=300, deviceCriteria="LEGACY")
+basic = api.basic_udi_detail(page["content"][0]["uuid"])   # device name lives here
 
-```bash
-eudamed export z1203.jsonl --cnd-code Z1203            # dies at page 140
-eudamed export z1203.jsonl --cnd-code Z1203 --resume   # picks up at page 140
+lake = DataLakeClient(contact="you@example.org")
+rows = lake.by_manufacturer("DE-MF-000005430")               # rows.truncated flags the cap
 ```
 
-A checkpoint whose filters, format, page size or `--enrich` setting do not
-match the current command is refused, naming the field that differs; resuming
-one query into another query's file would blend two result sets into one file
-carrying one manifest. Without `--resume` an existing checkpoint is ignored
-and the output overwritten. A completed export deletes its checkpoint.
+## Behaviour to know before you count anything
 
-**A resumed export is not a point-in-time snapshot.** The search endpoint has
-no server-side sort and the register changes daily, so page boundaries do not
-hold between runs: one device registered or withdrawn while the crawl is
-paused shifts every later record by one position. The resulting file is
-stitched together from two or more moments and can duplicate records across
-the seam or miss them. The checkpoint stores the uuids of the last page
-written and skips them on resume, which catches drift smaller than one page —
-the common case — but larger drift cannot be detected through this API at
-all: there is no "changed since" filter, and `lastUpdateDate` is null in every
-search response. The manifest therefore carries `resumed` and `resume_points`,
-so a stitched extract is distinguishable from a single-pass one on disk. If
-the extract has to be a snapshot, re-run it from scratch.
+- **Unknown filter names are silently ignored by the API** and return the
+  whole register. The client refuses any name not in
+  `VERIFIED_DEVICE_FILTERS`, each of which was shown to change
+  `totalElements`. There is no override.
+- **`name=` matches the manufacturer's name** as part of a concatenated field;
+  `tradeName=` is a diacritic-sensitive substring; the device name is not
+  searchable and costs one Basic UDI-DI request per device.
+- **A missing record is a 302, never a 404.** The client does not follow
+  redirects and returns `None` only for that case.
+- **A request that could not be answered raises `RequestFailed`.** It is
+  never reported as zero devices, an empty page or a manufacturer with no
+  registrations. The CLI exits 0 on success, 1 for a record that does not
+  exist, 2 for a usage error and 3 for a failed request. `eudamed reference`
+  is the one exception: a failed fetch yields an empty map, so an unknown id
+  falls back to the raw id, which is visibly not a label.
+- **Count Basic UDI-DIs when you mean devices.** A Basic UDI-DI is a device
+  model; each UDI-DI under it is a packaging or trade-item variant. Counting
+  UDI-DIs overstates the number of devices several-fold.
+- **A resumed export is not a point-in-time snapshot.** There is no
+  server-side sort and the register changes daily, so `--resume` stitches two
+  moments together; the manifest records `resumed` and `resume_points`.
+- **The detail cache never expires.** Pass `--no-cache` for a fresh pull.
+- **The Data Lake caps every response at 1,000 rows with no paging**, lags the
+  live register (registrations since its last refresh are absent), refuses
+  unaccepted filters with HTTP 400, and serves UTF-8 without a charset. The client flags a capped result as
+  `truncated`, refuses columns the endpoint would reject, and decodes UTF-8.
+- **`eudamed nomenclature walk` is unverified.** The endpoint it traverses
+  has returned HTTP 500 on every attempt; `sweep`, which counts devices per
+  EMDN code through the search endpoint, works.
+- **Rate limits are enforced without a `Retry-After` header.** The client
+  holds a minimum interval across threads, widens it on 429 and eases it back
+  only after sustained success. Pass `--contact` to identify yourself in the
+  User-Agent; every request is appended to a JSONL log for audit.
 
-## Three things the API does that will cost you a day
+## Documentation
 
-**It silently ignores parameters it does not recognise.** A misspelled or
-unsupported filter is not rejected — it returns the whole register (3.18
-million UDI-DI records on 2026-08-19) with HTTP 200. A typo does not fail loudly; it quietly replaces your
-result set with everything. This client refuses any filter name that has not
-been individually verified to change `totalElements` (see
-`VERIFIED_DEVICE_FILTERS` in `eudamed.client`); it will raise `ValueError`
-rather than let an unverified name reach the API. There is no CLI escape hatch
-around this — a flag only exists for a name on that list.
+- [`docs/api-reference.md`](docs/api-reference.md) — the read API: endpoint
+  map, verified and non-working filters, refdata vocabularies, response
+  shapes, certificate and notified-body endpoints, interface routes,
+  throttling behaviour.
+- [`docs/datalake-reference.md`](docs/datalake-reference.md) — the bulk
+  endpoint: parameters, cap, filters, columns and their conventions, the
+  reference vocabularies, and what the export does not carry.
+- [`skills/eudamed-toolkit/SKILL.md`](skills/eudamed-toolkit/SKILL.md) — a
+  skill file for coding agents using this package. Point your agent at it, or
+  copy the directory into your agent's skills folder.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to verify and add a filter, and
+  how to report an endpoint.
 
-**`name=` searches the manufacturer's name, not the device's.** It matches a
-substring over a concatenated field that includes the manufacturer's
-registered name, so `--name Siemens` will surface devices made by *Varian
-Medical Systems*, a Siemens Healthineers company. It is a useful recall net,
-but treating a hit as evidence the device itself is named that is a mistake
-this API makes easy to walk into.
-
-**A missing record returns 302, never 404.** EUDAMED answers "no such record"
-by redirecting to an internal page-not-found route with HTTP 302. Follow that
-redirect and you'll get a 200 and an HTML page, which looks like success. This
-client sets `allow_redirects=False` and treats any redirect as a miss
-(`None`), so a lookup failure surfaces as a lookup failure.
-
-## An outage is not an empty result
-
-A request that could not be answered raises `eudamed.RequestFailed`; it never
-comes back as zero records, zero devices or an empty page. The distinction the
-whole package turns on is between *the register says there is nothing* and *we
-could not find out*:
-
-- A search matching no devices yields nothing, and `count_devices` returns `0`.
-- A page that 503s mid-crawl raises, so `eudamed export` cannot write a
-  plausible-looking partial extract — with a manifest and a SHA-256 attesting
-  to it — and exit 0.
-- A Data Lake query for a manufacturer with no registrations is an empty
-  `Result`; one that could not be run raises, and `harvest` reports it under
-  `failed_srns` rather than counting it as pulled.
-
-`eudamed reference` is the deliberate exception: a failed fetch there yields
-an empty map for that code rather than raising, because an unrecognised id
-then falls back to the raw id, which is visibly not a label, so nothing
-downstream is silently wrong — and it lets a rebuild run offline from cache.
-
-The CLI exits 0 on success, 1 for a record that does not exist, 2 for a usage
-error and **3 for a request that failed**, except `reference`, which exits 0
-even under total network failure. A script can otherwise tell "nothing is
-there" from "we could not find out".
-
-## EMDN traversal is unverified
-
-`eudamed nomenclature walk` is built against `GET /devices/nomenclatures/`,
-which **returned HTTP 500 to every form tried on 2026-08-11** (bare, with the
-full page parameter set, with `code=Z`, and at `/devices/nomenclatures/roots`;
-confirmed twice that day). The command is shipped because the path is real and
-appears in the interface's own endpoint map, but its response handling has
-never been exercised against a live response, and today it will raise
-`RequestFailed` rather than return a tree. `eudamed nomenclature sweep`, which
-counts devices per EMDN code through the search endpoint, is unaffected and
-works. See [`docs/api-reference.md`](docs/api-reference.md).
-
-See [`docs/api-reference.md`](docs/api-reference.md) for the rest — the
-endpoint map, the full verified and non-working filter lists with the refdata
-vocabularies and their counts, the endpoints that 500 or 302 unconditionally,
-the fields the search response always returns `null`, the certificate and
-notified-body endpoints, the throughput and throttling measurements, and the
-interface routes for linking back into the public site.
-
-## The Data Lake is not the register
-
-`eudamed.datalake` talks to the Commission's bulk CSV endpoint, which returns
-60 columns per UDI-DI — including the device name, EMDN code and legacy/MDR
-pathway that the search API nulls — one manufacturer per request. It is
-documented in [`docs/datalake-reference.md`](docs/datalake-reference.md),
-which ends with what the export leaves out. The short version:
-
-- **It lags the live register.** Records registered since the last refresh
-  (roughly daily; undocumented) are absent, and nothing in the data dates the
-  snapshot. On the morning of 2026-08-19, 32 of 40 records sampled from the
-  newest page of the search API had no Data Lake row.
-- **Every response is capped at 1,000 rows with no pagination**, and a capped
-  response looks complete. The client flags a 1,000-row result as
-  `truncated`; a manufacturer over the cap has to be split on `RISK_CLASS_ID`
-  or `APPLICABLE_LEGISLATION_ID`, or completed from the search API.
-- **It refuses filters it does not accept with HTTP 400** rather than
-  ignoring them — safer than the search API, with the one trap that a client
-  treating any non-200 as "no rows" reads a refused filter as an empty
-  manufacturer. The client raises `ValueError` for a refused or unverified
-  column name before sending anything.
-- **It carries current versions only, no timestamps, no certificates, no
-  actor uuids and no manufacturer country**; and its reference vocabulary
-  has no labels for the legacy software type ids.
-- **The CSV is UTF-8 served without a charset.** Read the bytes as UTF-8, or
-  every accented manufacturer name is mangled. The client does.
-
-## Basic UDI-DI vs UDI-DI
-
-EUDAMED's unit of analysis is not obvious from the API alone. A **Basic
-UDI-DI** identifies a device *model*; each **UDI-DI** under it identifies a
-packaging or trade-item variant of that same model (different pack sizes,
-sterile vs non-sterile, and so on). Counting UDI-DIs when you mean to count
-devices inflates your figure — the observed inflation factor is around **2.5**
-UDI-DIs per Basic UDI-DI. Decide which one you're counting before you count
-anything, and say which one you did.
-
-## Rate limits and the request log
-
-The client enforces a minimum interval between requests (0.4 s by default,
-`--min-interval` on the CLI), held across threads so raising concurrency never
-raises the request rate. Sustained rates above roughly 4 requests/second have
-been observed to produce HTTP 429 within a minute or two, and EUDAMED never
-returns a `Retry-After` header, so the client cannot learn the correct backoff
-from the service — it widens its own interval after a 429 and eases it back
-down only after a run of sustained success.
-
-Detail lookups (`device`, `actor`, the Basic UDI-DI records `--enrich` merges
-in) are cached on disk under `--cache-dir`; search pages never are, because
-they are volatile. **The cache does not expire.** The register changes daily —
-registrations are added, statuses change — so a cached record can be
-arbitrarily old, and a re-run of a months-old extraction will happily rebuild
-it from months-old responses. Pass `--no-cache` for a fresh pull, or delete the
-cache directory. A cached record's own contents carry no fetch timestamp — only
-the file's modification time and the request log do.
-
-Every request — URL, parameters, status, byte count, elapsed time — is
-appended to a JSONL log (`logs/requests.jsonl` by default, `--log` to change
-it), so a run can be reconstructed and audited after the fact. Please rate-limit
-politely; this is shared public infrastructure, and it is logged on the
-Commission's side too. Pass `--contact you@example.org` to identify yourself
-in the User-Agent header.
+Neither reference records counts or dates: every figure pulled from EUDAMED
+is a snapshot as of the moment it was pulled, and belongs in the manifest
+next to your extract.
 
 ## Licence and citation
 
 MIT. See [`LICENSE`](LICENSE).
-
-If this package is useful in published work, please cite the repository:
 
 ```
 Widaeus, J. eudamed-toolkit: an unofficial client for the EUDAMED public API.

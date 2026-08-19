@@ -176,7 +176,7 @@ def test_walk_raises_type_error_on_a_dict_without_a_known_list_key():
 
 def test_walk_raises_when_the_endpoint_is_down(tmp_path, fake_session):
     """I2, and not a hypothetical: GET /devices/nomenclatures/ answered HTTP
-    500 to every form tried on 2026-08-11, so this is the path a live walk
+    500 to every form tried, so this is the path a live walk
     actually takes. Printing `[]` and exiting 0 states that the EMDN tree is
     empty, which the module's own docstring promises never to do."""
     client = EudamedClient(cache_dir=tmp_path / "cache",

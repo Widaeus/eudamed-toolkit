@@ -1,21 +1,24 @@
 # DG SANTE Data Lake — the EUDAMED bulk endpoint, what actually works
 
-The Commission publishes an OpenAPI file for this endpoint but no prose
-documentation, no rate limit, no row cap and no statement of what the export
-does and does not contain. Everything below was established empirically
-against the live service and verified on **2026-08-19**, except where another
-date is given. It complements [`api-reference.md`](api-reference.md), which
-covers the JSON read API behind the public interface; the two expose the same
-register with different strengths, and this file ends with what the Data Lake
-leaves out.
+The Commission publishes an OpenAPI file for this endpoint — which names the
+endpoints and the query parameters each accepts, and is accurate as far as it
+goes — but no prose documentation, no rate limit, no row cap, no match
+semantics, no column list and no statement of what the export does and does
+not contain. Everything below was established empirically
+against the live service, and records behaviour rather than counts: the
+register grows daily and any figure pulled from it belongs in the manifest
+next to the extract, not here. It complements
+[`api-reference.md`](api-reference.md), which covers the JSON read API behind
+the public interface; the two expose the same register with different
+strengths, and this file ends with what the Data Lake leaves out.
 
 Base URL: `https://api.datalake.sante.service.ec.europa.eu/eudamed`
 
 ## Where it comes from
 
-The endpoint is described by an OpenAPI 3.0.1 file titled *API - EUDAMED
-Public*, linked as "Swagger (OpenAPI) file" under *Miscellaneous* on the
-EUDAMED Information Centre's technical documentation page,
+The endpoint is described by an OpenAPI file titled *API - EUDAMED Public*,
+linked as "Swagger (OpenAPI) file" under *Miscellaneous* on the EUDAMED
+Information Centre's technical documentation page,
 <https://webgate.ec.europa.eu/eudamed-help/en/documentation/technical-documentation.html>.
 Two traps on that page:
 
@@ -24,18 +27,25 @@ Two traps on that page:
   <https://webgate.ec.europa.eu/eudamed-help/en/files/Swagger%20OpenAPI%20file.yaml>.
 - The same page links the UDI data dictionary (`UDI Devices - data
   dictionary.xlsx`), the enumerations PDFs and the XSD schema bundle
-  (`XSD schemas.zip`, v3.0.30 against platform release v2.27.0). Those
-  describe the *registration* data model, whose field ids (`FLD-UDID-nnn`)
-  are the closest thing to a specification of what the columns below mean.
+  (`XSD schemas.zip`). Those describe the *registration* data model, whose
+  field ids (`FLD-UDID-nnn`) are the closest thing to a specification of what
+  the columns below mean.
+
+The OpenAPI file declares, per endpoint, the query parameters the service
+accepts, and the service agrees with it exactly: every parameter it lists
+filters, and every name it does not list is refused. What it leaves out is
+everything else in this file — the row cap and the absence of paging, the
+`api-version` parameter, the match semantics, the response columns, the
+charset, and what the export omits.
 
 The OpenAPI file declares an Azure API Management key scheme
-(`Ocp-Apim-Subscription-Key` header / `subscription-key` query). **No key was
-required** on 2026-07-30 or 2026-08-19; requests without one succeed. The DG
-SANTE developer portal (`developer.datalake.sante.service.ec.europa.eu/docs`)
-says its documentation is under construction and documents only the
-mandatory `api-version` parameter and a deprecation/brownout policy. There is
-no published rate limit, quota or terms of use for this endpoint; the SPA's own
-help pages describe a public bulk download only as "the link at the top of the
+(`Ocp-Apim-Subscription-Key` header / `subscription-key` query). **No key has
+been required**; requests without one succeed. The DG SANTE developer portal
+(`developer.datalake.sante.service.ec.europa.eu/docs`) says its documentation
+is under construction and documents only the mandatory `api-version`
+parameter and a deprecation/brownout policy. There is no published rate
+limit, quota or terms of use for this endpoint; the SPA's own help pages
+describe a public bulk download only as "the link at the top of the
 Devices/SPPs search page", without naming this host. Treat the whole thing as
 liable to change without notice.
 
@@ -62,9 +72,9 @@ Three endpoints exist. Everything else tried — `/actor`, `/certificate(s)`,
 
 | Endpoint | Rows | Filters |
 |---|---|---|
-| `GET /udi` | one per UDI-DI, 60 columns | see below |
-| `GET /actors` | one per economic operator, 25 columns | `ACTOR_ID`, `ACTOR_TYPE`, `ACT_COUNTRY_ISO2_CODE`, `NAME` |
-| `GET /reference` | one per (code, id, language), 4 columns | `CODE` |
+| `GET /udi` | one per UDI-DI | see below |
+| `GET /actors` | one per economic operator | `ACTOR_ID`, `NAME`, `ABBREVIATED_NAME`, `ACTOR_TYPE`, `CA_NAME`, `CA_ACTOR_ID`, `ACT_COUNTRY_ISO2_CODE` |
+| `GET /reference` | one per (code, id, language) | `CODE`, `ID`, `LANGUAGE` |
 
 **A hard 1,000-row cap, with no pagination.** Every endpoint returns at most
 1,000 rows. `$top`, `$skip`, `limit`, `offset`, `page`, `pageSize` and `skip`
@@ -88,17 +98,18 @@ extraction date; the response headers are `Date`, `x-ms-correlation-id` and
 Data Lake pull is the date you pulled it, and nothing in the data will
 contradict a wrong one.
 
-Filters combine with AND. Requests take roughly 1–3 s; a full 1,000-row CSV
-page is about 840 KB. Rate-limit yourself anyway (this package holds a 0.5 s
-floor between requests); nothing here is documented as permitted at any
-particular rate.
+Filters combine with AND. Requests take seconds and a full 1,000-row CSV page
+is under a megabyte. Rate-limit yourself anyway (this package holds a floor of
+half a second between requests); nothing here is documented as permitted at
+any particular rate.
 
 ## `GET /udi`
 
 ### Filters
 
-Verified 2026-08-19 by sending each of the 60 column names as a parameter
-with a value taken from the data and observing the rows returned.
+Verified by sending each column name as a parameter with a value taken from
+the data and observing the rows returned. The accepted set is exactly the one
+the OpenAPI file declares for `/udi`; the semantics are not in the file.
 
 Accepted:
 
@@ -113,7 +124,7 @@ Accepted:
 | `PLACED_ON_THE_MARKET_ID` | exact | reference id; the `/reference` labels for it are country names |
 | `NOMENCLATURE_CODE` | exact, **stored with a leading space** | ` Z12110102` matches; `Z12110102` returns zero rows with HTTP 200; `Z12` (prefix) returns zero rows. Multi-code devices store a comma-separated list (` C0104010101,C0104020101`), which only the whole string matches. |
 | `DEVICE_NAME` | exact on the whole field, case-insensitive | `finncomfort` matches `FinnComfort`; no substring |
-| `TRADE_NAME` | exact on the whole field, case-insensitive | `CURSHMAN` does not match `CURSHMAN Trokar 4,5 x 2,2 mm` |
+| `TRADE_NAME` | exact on the whole field, case-insensitive | a prefix of the trade name does not match |
 | `REFERENCE` | exact, case-insensitive | |
 | `DEVICE_MODEL`, `MEDICAL_PURPOSE` | accepted | match type not characterised |
 
@@ -133,14 +144,13 @@ must be looked up, never guessed; an earlier attempt guessed them and was
 wrong on every one, and the resulting empty responses were misread as
 "this filter does nothing".
 
-Counts observed 2026-08-19: `SPECIAL_DEVICE_TYPE_ID=-47` → 701 rows,
-`-1192` → 917, `-1202` → 204, `-44` → 632, all under the cap; `-43` → 1,000
-(capped). The same day the read API's `deviceTypes` filter gave 701, 917, 204
-for the IVDR, MDD and IVDD software types, and 4,915 for MDR — the two
-sources agree exactly where the Data Lake is under its cap, which is a
-usable cross-source consistency check.
+The software slices for the IVDR and the two legacy directives have fitted
+under the cap; the MDR software slice has not, and must be enumerated by
+manufacturer or split on `RISK_CLASS_ID`. Where a slice is under the cap its
+row count has matched the read API's `deviceTypes` count for the same code on
+the same day, which is a usable cross-source consistency check.
 
-### The 60 columns
+### The columns
 
 ```
 ID, UDI_DI_DATA_ULID, UUID, TRADE_NAME, REFERENCE, PLACED_ON_THE_MARKET_ID,
@@ -158,7 +168,7 @@ AR_ACTOR_NAMES, UNIT_OF_USE_DI, DIRECT_MARKETING_DI, SECONDARY_DI,
 CONTAINER_PACKAGE_DIS, SUBSTATUSES
 ```
 
-Conventions, from a 1,000-row unfiltered sample and the filtered pulls above:
+Conventions, from unfiltered samples and the filtered pulls above:
 
 - **Identifiers.** `UUID` is the UDI-DI uuid the read API and the public
   interface use (`#/screen/search-device/{UUID}`); `BASIC_UDI_DATA_UUID` is
@@ -172,16 +182,15 @@ Conventions, from a 1,000-row unfiltered sample and the filtered pulls above:
   `SPECIAL_DEVICE_TYPE_ID`, `PLACED_ON_THE_MARKET_ID`, `MULTI_COMPONENT_ID`,
   `STATUS_ID`. Decode them through `/reference` (below); this package's
   `eudamed.reference` does.
-- **Booleans are `1`, `0` or empty** — `STERILE` was 256/744/0 in the sample,
-  `IMPLANTABLE` 177/763/60, `ACTIVE` 63/877/60. Empty means the flag was not
-  applicable or not entered, not false.
+- **Booleans are `1`, `0` or empty.** Empty means the flag was not applicable
+  or not entered, not false.
 - **`DEVICE_CRITERION`** takes three values: `STANDARD` (MDR/IVDR
   registration), `LEGACY` (Art. 120 transitional device registered under the
   MDD/AIMDD/IVDD) and `SPP` (system or procedure pack, Art. 22). This is the
   pathway variable, and it is populated here for free where the read API's
   search response nulls it.
-- **`LATEST_VERSION` was `1` on every row seen**, while `VERSION_NUMBER`
-  ranged 1–4. The export appears to carry only the current version of each
+- **`LATEST_VERSION` has been `1` on every row seen**, while `VERSION_NUMBER`
+  varies. The export appears to carry only the current version of each
   UDI-DI; the version-history endpoint of the read API is the only route to
   earlier ones.
 - **`NOMENCLATURE_CODE` carries a leading space** on every value, and a device
@@ -192,31 +201,31 @@ Conventions, from a 1,000-row unfiltered sample and the filtered pulls above:
   cell** — `{"texts":[{"language":{"isoCode":"en",…},"text":"…"}]}`, the
   multilingual name structure. `MF_NAME` and `AR_NAME` are the plain strings.
 - **`CONTAINER_PACKAGE_DIS`** is a comma-separated list of DIs.
-- **`MEDICAL_PURPOSE`** is free text and populated for about 2% of rows (19 of
-  1,000 unfiltered; ~3% of one 4,000-device software sample), with values from
-  a paragraph of intended-purpose prose to `No`. It is the closest thing to an
-  intended-purpose field in either public source, and far too sparse to
-  screen on.
-- **Names are often empty**: in the unfiltered sample `DEVICE_NAME` was empty
-  on 15% of rows and `TRADE_NAME` on 22%. Some rows under one Basic UDI-DI
-  carry a device name and others do not.
-- `SUBSTATUSES` was empty on every row seen; `STATUS_ID` was `-1306` on
-  99.6% and `-1307` on the rest.
+- **`MEDICAL_PURPOSE`** is free text and populated on a small minority of
+  rows, with values from a paragraph of intended-purpose prose to `No`. It is
+  the closest thing to an intended-purpose field in either public source, and
+  far too sparse to screen on.
+- **Names are often empty**: a sizeable share of rows have no `DEVICE_NAME`,
+  and more have no `TRADE_NAME`. Some rows under one Basic UDI-DI carry a
+  device name and others do not.
+- `SUBSTATUSES` has been empty on every row seen; `STATUS_ID` takes very few
+  values.
 
 ### `GET /reference` — decoding the ids
 
-Columns `ID, CODE, LANGUAGE, VALUE`; every language (23 seen) comes back in
-one response, so filter to `LANGUAGE == "en"` or you keep whichever language
-was written last. **Always pass `CODE`**: without it the response is the
-first 1,000 rows of every vocabulary and is truncated — 881 of those 1,000
-were `PLACED_ON_THE_MARKET_ID` (countries × languages), so even the *list of
-codes* visible that way is not necessarily complete. Codes seen:
+Columns `ID, CODE, LANGUAGE, VALUE`; filters `CODE`, `ID` and `LANGUAGE`,
+all exact. Without `LANGUAGE` every EU language comes back in one response,
+so pass `LANGUAGE=en` (or filter client-side) or you keep whichever language
+was written last. **Always pass `CODE`**: without it the response is the first
+1,000 rows of every vocabulary and is truncated — dominated by
+`PLACED_ON_THE_MARKET_ID` (countries × languages) — so even the *list of
+codes* visible that way is not necessarily complete. `ID` alone matches
+across vocabularies (`-204` is both a risk class and a country). Codes seen:
 `PLACED_ON_THE_MARKET_ID`, `RISK_CLASS_ID`, `APPLICABLE_LEGISLATION_ID`,
 `SPECIAL_DEVICE_TYPE_ID`, `DEVICE_STATUS_TYPE_ID`, `MULTI_COMPONENT_ID`,
-`STATUS_ID`. Per-code responses were well under the cap (299, 69, 163 and
-207 rows for the four below).
+`STATUS_ID`. Per-code responses fit well under the cap.
 
-English values, 2026-08-19:
+English values:
 
 | `RISK_CLASS_ID` | | `APPLICABLE_LEGISLATION_ID` | |
 |---|---|---|---|
@@ -241,9 +250,9 @@ vs `…ivd…`) — `-44` Standard soft contact lenses, `-46` Standard rigid gas
 permeable (RGP) contact lenses, `-1188` Made-to-order soft contact lenses,
 `-3030` Made-to-order RGP contact lenses, `-1189` Spectacle frames, `-1190`
 Spectacle lenses, `-1191` Ready-made reading spectacles. **`-1192` and
-`-1202` — the software flags on legacy MDD and IVDD devices, 917 and 204
-rows in `/udi` — have no row in `/reference` at all**, in any language. A
-decoder built only from `/reference` will show them as raw integers.
+`-1202` — the software flags on legacy MDD and IVDD devices, which do occur
+in `/udi` — have no row in `/reference` at all**, in any language. A decoder
+built only from `/reference` will show them as raw integers.
 
 Note that the register does not separate Class Is, Im or Ir from Class I in
 either source; the read API 400s on `refdata.risk-class.class-is`.
@@ -266,11 +275,13 @@ ACT_ADDR_COUNTRY_CODE, ACT_ADDR_COUNTRY_TYPE, PRRC_FIRST_NAME, PRRC_FAMILY_NAME
 | Parameter | Match | Note |
 |---|---|---|
 | `ACTOR_ID` | exact | the SRN (`NL-MF-000027730`); for notified bodies the four-digit NB number (`2460`) |
-| `ACTOR_TYPE` | exact | `Manufacturer`, `Importer`, `Authorised Representative`, `System/Procedure Pack Producer`, `Notified Body` (39 rows, complete) |
+| `ACTOR_TYPE` | exact | `Manufacturer`, `Importer`, `Authorised Representative`, `System/Procedure Pack Producer`, `Notified Body` (the last fits under the cap) |
 | `ACT_COUNTRY_ISO2_CODE` | exact | any populous country hits the cap; combine with `ACTOR_TYPE` |
-| `NAME` | exact, whole field | `UROMASTER GmbH` matches, `UROMASTER` does not |
+| `NAME`, `ABBREVIATED_NAME` | exact, whole field | `UROMASTER GmbH` matches, `UROMASTER` does not |
+| `CA_NAME`, `CA_ACTOR_ID` | accepted | competent-authority name and id; not otherwise characterised |
 
-`STATUS`, `VERSION`, `SRN` and anything else → HTTP 400. There is no uuid
+These are exactly the parameters the OpenAPI file declares. `STATUS`,
+`VERSION`, `SRN` and anything else → HTTP 400. There is no uuid
 column, so this endpoint cannot by itself produce a link into the public
 interface's economic-operator page; the read API's Basic UDI-DI detail carries
 `manufacturer.uuid`.
@@ -292,35 +303,32 @@ Ireland. Normalise before counting by country.
 This is the section to read before treating a Data Lake pull as the register.
 
 1. **It lags the live register.** UDI-DIs registered on the day of the query
-   are absent: of 40 records sampled from page 0 of the read API's device
-   search on the morning of 2026-08-19 — page 0 holds the newest
-   registrations, all with `versionDate` from that same morning — **32 had no
-   Data Lake row by `PRIMARY_DI`**, while 80 of 80 sampled from pages 4,000
-   and 9,000 were present. The missing records had been registered between
-   04:28 and 05:01 UTC that day and were probed at about 05:50; a record
-   updated at 16:26 the previous day was present. So the export appears to
-   refresh at least daily, but nothing documents the cadence and nothing in
-   the data dates the snapshot. Anything registered since the last refresh
-   is invisible here and visible on the read API.
+   have been absent: records sampled from page 0 of the read API's device
+   search — which holds the newest registrations — were mostly missing from
+   the export by `PRIMARY_DI` while records from deeper pages were all
+   present, and records registered late the previous day were present the
+   next morning. So the export appears to refresh at least daily, but nothing
+   documents the cadence and nothing in the data dates the snapshot. Anything
+   registered since the last refresh is invisible here and visible on the
+   read API.
 
 2. **Every partition over 1,000 rows is silently truncated.** A manufacturer
-   with more than 1,000 UDI-DIs cannot be enumerated by `MF_SRN` alone — in
-   one harvest of 2,338 manufacturers on 2026-07-30, 84 (3.6%) hit the cap.
-   Split those on `RISK_CLASS_ID`, `APPLICABLE_LEGISLATION_ID` or
-   `SPECIAL_DEVICE_TYPE_ID`, or fall back to the read API. A pipeline that
-   does not check for exactly 1,000 rows will report those manufacturers as
-   complete.
+   with more than 1,000 UDI-DIs cannot be enumerated by `MF_SRN` alone, and
+   a few percent of manufacturers are that large. Split those on
+   `RISK_CLASS_ID`, `APPLICABLE_LEGISLATION_ID` or `SPECIAL_DEVICE_TYPE_ID`,
+   or fall back to the read API. A pipeline that does not check for exactly
+   1,000 rows will report those manufacturers as complete.
 
 3. **A partition-based harvest is only as complete as its partition list.**
    Pulling by `MF_SRN` retrieves nothing for a manufacturer that was not on
    the list, and the endpoint gives no way to enumerate manufacturers
-   (`/actors` is capped too). One same-day comparison found 8% of devices
-   discovered through the read API absent from an `MF_SRN` harvest; on
-   re-check three weeks later every sampled one was present, and most of the
-   gap traced to manufacturers the harvest had never queried plus partitions
-   over the cap — not to the Data Lake. **Structural omissions from the export
-   have not been demonstrated; nor has their absence.** Compare a sample
-   against the read API before claiming either.
+   (`/actors` is capped too). A same-day comparison once found a noticeable
+   share of devices discovered through the read API absent from an `MF_SRN`
+   harvest; on re-check weeks later every sampled one was present, and most
+   of the gap traced to manufacturers the harvest had never queried plus
+   partitions over the cap — not to the Data Lake. **Structural omissions
+   from the export have not been demonstrated; nor has their absence.**
+   Compare a sample against the read API before claiming either.
 
 4. **Current versions only.** No history, no superseded records, no
    registration or update timestamps on any row.
@@ -336,7 +344,7 @@ This is the section to read before treating a Data Lake pull as the register.
    seven listed above.
 
 7. **No intended purpose worth screening on.** `MEDICAL_PURPOSE` is populated
-   for about 2% of rows.
+   on a small minority of rows.
 
 ## Where the two sources fit together
 

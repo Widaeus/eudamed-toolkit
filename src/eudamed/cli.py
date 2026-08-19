@@ -53,10 +53,14 @@ FILTER_HELP: dict[str, str] = {
     "primaryDi": "primary DI, exact match",
     "basicUdi": "Basic UDI-DI, exact match",
     "deviceTypes": (
-        "special device type, full refdata code "
-        "(e.g. refdata.special-mdr-device-type.software)"
+        "special device type, full refdata code (e.g. "
+        "refdata.special-mdr-device-type.software; legacy devices carry the flag "
+        "under special-mdd-, special-ivdd- and special-aimdd-device-type)"
     ),
-    "deviceCriteria": "STANDARD (MDR) or LEGACY (Art. 120 MDD/AIMDD transitional), exact match",
+    "deviceCriteria": (
+        "STANDARD (MDR/IVDR), LEGACY (Art. 120 transitional) or SPP "
+        "(system/procedure pack), exact match"
+    ),
 }
 
 

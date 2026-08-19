@@ -4,7 +4,7 @@ Every EUDAMED URL used anywhere in this project is built here. The public
 interface is an Angular single-page application, so its addresses are hash
 routes and cannot be inferred from the REST API paths. The route table was read
 out of the deployed bundle (`main.<hash>.js` and the lazy feature chunks listed
-in `runtime.<hash>.js`) and confirmed against the live service on 2026-08-11:
+in `runtime.<hash>.js`) and confirmed against the live service:
 
     screen/search-device/:uuid    the UDI-DI uuid
     screen/search-eo/:uuid        the actor uuid
@@ -65,7 +65,7 @@ def representative_uuid(records: Iterable[Mapping[str, Any]]) -> str | None:
     """Choose the UDI-DI a Basic UDI-DI's link should point at.
 
     A Basic UDI-DI carries several UDI-DIs — the observed inflation factor is
-    about 2.5 — so one has to be chosen. Reviewers keep these links for months,
+    several — so one has to be chosen. Reviewers keep these links for months,
     so the choice is deterministic rather than dependent on input order: the
     latest version, then the highest version number, then the lexically first
     uuid.
