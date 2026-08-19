@@ -5,75 +5,82 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-08-19
 
-### Fixed
-
-- `eudamed.datalake` and `eudamed.reference` decoded the Data Lake's CSV
-  through `requests`' default, which — because the service sends `text/csv`
-  with no charset — is ISO-8859-1. Every non-ASCII character came back
-  mangled (`FKG Dentaire SÃ rl`). Both now decode the body as UTF-8.
-- `eudamed.datalake` listed `RISK_CLASS_ID` as a filter the endpoint accepts
-  and ignores. It filters (verified 2026-08-19; Class IIa is `-204`), as do
-  `APPLICABLE_LEGISLATION_ID`, `PLACED_ON_THE_MARKET_ID`,
-  `NOMENCLATURE_CODE`, `DEVICE_NAME`, `TRADE_NAME`, `REFERENCE`,
-  `DEVICE_MODEL` and `MEDICAL_PURPOSE`; all are now in `VERIFIED_FILTERS`.
-  The columns the endpoint does not accept — `DEVICE_CRITERION`,
-  `DEVICE_STATUS_TYPE_ID`, `LATEST_VERSION` and the rest — are refused with
-  HTTP 400 and an empty body, not answered with an empty result as the old
-  docstring said; they are now `REJECTED_FILTERS` (`INERT_FILTERS` remains
-  as an alias) and the `ValueError` says so.
-- `DataLakeClient.fetch` sends `NOMENCLATURE_CODE` in the form the export
-  stores it, with a leading space; the match is exact and the bare code
-  returned zero rows with HTTP 200.
+First stable release. The public interface of `eudamed.client`,
+`eudamed.datalake`, `eudamed.export`, `eudamed.reference`, `eudamed.urls`,
+`eudamed.provenance` and the `eudamed` command is now covered by semantic
+versioning.
 
 ### Added
-
-- `docs/datalake-reference.md` — an empirical reference for the DG SANTE
-  Data Lake: how it is reached, its three endpoints, the 1,000-row cap, the
-  full accepted/refused filter lists for `/udi`, the 60 columns and their
-  value conventions, `/actors` (with its personal-data columns) and
-  `/reference` with the decoded vocabularies, and a closing section on what
-  the export does not carry — the lag behind the live register, cap
-  truncation, current-versions-only, the missing subject areas and the
-  incomplete reference vocabulary.
-- `docs/api-reference.md` — the refdata vocabularies for risk class,
-  legislation and status with 2026-08-19 counts (and the values that 400);
-  the legacy software device-type codes; `deviceCriteria=SPP`; the
-  certificate, refused-application and notified-body endpoints with their
-  fields and verified filters; the `medicalPurpose` and certificate-scope
-  `intendedPurpose` fields that qualify the no-intended-purpose finding;
-  timestamps on the detail records; SRN conventions; the EMDN source file;
-  the Commission's own documentation and its broken links.
-- `SPECIAL_DEVICE_TYPE` gained `mdd_software` (`-1192`) and `ivdd_software`
-  (`-1202`), the flags on legacy devices, which `/reference` has no labels
-  for.
 
 - `eudamed.export` — resumable exports. Every completed page is recorded in
   `<out>.progress.json`; an export that raises leaves that checkpoint and its
   partial output in place, and `export_devices(..., resume=True)` (`--resume`
   on the CLI) continues from the next unfetched page rather than starting
   over. A checkpoint whose `filters`, `fmt`, `page_size` or `enrich` differ
-  from the current call is refused, naming the field that differs, since
-  resuming one query into another query's file would blend two result sets.
-  A completed export deletes its checkpoint.
-
-  **A resumed export is not a point-in-time snapshot.** The search endpoint
-  has no server-side sort and the register changes daily, so page boundaries
-  move between runs and the result is stitched together from two or more
+  from the current call is refused, naming the field that differs. A
+  completed export deletes its checkpoint. **A resumed export is not a
+  point-in-time snapshot**: the search endpoint has no server-side sort and
+  the register changes daily, so the result is stitched from two or more
   moments. The checkpoint stores the uuids of the last page written and skips
-  them on resume, which catches drift smaller than one page; larger drift
-  cannot be detected through this API. The manifest records `resumed` and
-  `resume_points` so a stitched extract can be told from a clean one on disk.
+  them on resume, which catches drift smaller than one page; the manifest
+  records `resumed` and `resume_points` so a stitched extract can be told
+  from a clean one on disk.
+- `docs/datalake-reference.md` — an empirical reference for the DG SANTE
+  Data Lake: how it is reached, its three endpoints, the row cap, the
+  accepted and refused filters for `/udi`, the columns and their value
+  conventions, `/actors` (with its personal-data columns) and `/reference`
+  with the decoded vocabularies, and a closing section on what the export
+  does not carry — the lag behind the live register, cap truncation,
+  current-versions-only, the missing subject areas and the incomplete
+  reference vocabulary.
+- `docs/api-reference.md` — the refdata vocabularies for risk class,
+  legislation, status and special device type, including the values that do
+  not exist and the legacy software device-type codes; `deviceCriteria=SPP`;
+  the certificate, refused-application and notified-body endpoints with their
+  fields and verified filters; the `medicalPurpose` and certificate-scope
+  `intendedPurpose` fields that qualify the no-intended-purpose finding;
+  timestamps on the detail records; SRN conventions; the EMDN source file;
+  the Commission's own documentation and its broken links.
+- `skills/eudamed-toolkit/SKILL.md` — a skill file for coding agents that
+  use this package.
+- `SPECIAL_DEVICE_TYPE` gained `mdd_software` and `ivdd_software`, the flags
+  on legacy devices, which the reference endpoint has no labels for.
 
 ### Changed
 
-- `eudamed.export` now walks `client.search_devices` page by page rather than
+- `eudamed.export` walks `client.search_devices` page by page rather than
   `client.iter_devices`, which flattens away the page boundaries a checkpoint
   needs. The client's public interface is unchanged.
 - `eudamed.export` checks for `pyarrow` before starting the crawl rather than
-  after it, so a missing Parquet extra is not discovered at the end of a
-  several-hour export.
+  after it.
+- `eudamed.reference` asks the reference endpoint for English only
+  (`LANGUAGE=en`), which the endpoint accepts, and still filters client-side.
+- Both reference documents and the README no longer record counts, timings
+  or verification dates. Every figure pulled from EUDAMED is a snapshot as of
+  the moment it was pulled and belongs in a manifest, not in a reference; the
+  documents record behaviour, which is what a client can be built against.
+
+### Fixed
+
+- `eudamed.datalake` and `eudamed.reference` decoded the Data Lake's CSV
+  through `requests`' default, which — because the service sends `text/csv`
+  with no charset — is ISO-8859-1. Every non-ASCII character came back
+  mangled. Both now decode the body as UTF-8.
+- `eudamed.datalake` listed `RISK_CLASS_ID` as a filter the endpoint accepts
+  and ignores. It filters (Class IIa is `-204`), as do
+  `APPLICABLE_LEGISLATION_ID`, `PLACED_ON_THE_MARKET_ID`,
+  `NOMENCLATURE_CODE`, `DEVICE_NAME`, `TRADE_NAME`, `REFERENCE`,
+  `DEVICE_MODEL` and `MEDICAL_PURPOSE`; all are now in `VERIFIED_FILTERS`,
+  which matches the parameter list in the Commission's OpenAPI file for the
+  endpoint. The columns the endpoint does not accept are refused with HTTP
+  400 and an empty body, not answered with an empty result as the old
+  docstring said; they are now `REJECTED_FILTERS` (`INERT_FILTERS` remains
+  as an alias) and the `ValueError` says so.
+- `DataLakeClient.fetch` sends `NOMENCLATURE_CODE` in the form the export
+  stores it, with a leading space; the match is exact and the bare code
+  returned zero rows with HTTP 200.
 
 ## [0.1.0] - 2026-08-11
 
@@ -121,4 +128,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `docs/api-reference.md` — the empirical API reference this package is built
   from.
 
+[1.0.0]: https://github.com/Widaeus/eudamed-toolkit/releases/tag/v1.0.0
 [0.1.0]: https://github.com/Widaeus/eudamed-toolkit/releases/tag/v0.1.0

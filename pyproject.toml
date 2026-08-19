@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "eudamed-toolkit"
-version = "0.1.0"
+version = "1.0.0"
 description = "Client and extraction tools for the EU database on medical devices (EUDAMED)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ license = { file = "LICENSE" }
 authors = [{ name = "Jacob Widaeus", email = "jacob.widaeus@ki.se" }]
 keywords = ["eudamed", "medical devices", "mdr", "ivdr", "regulatory", "udi"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Healthcare Industry",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",

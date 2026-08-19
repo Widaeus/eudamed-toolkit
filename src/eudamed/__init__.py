@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from eudamed.errors import EudamedError, RequestFailed
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 
 def user_agent(contact: str | None = None, agent: str | None = None) -> str:
