@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from eudamed.reference import ReferenceMaps, build_session
 
+from .conftest import FakeResponse
+
 CSV = (
     "ID,CODE,LANGUAGE,VALUE\n"
     "-204,RISK_CLASS_ID,en,Class IIa\n"
@@ -132,3 +134,18 @@ def test_a_successful_fetch_still_writes_the_cache(tmp_path, monkeypatch):
     maps = ReferenceMaps.load(cache=cache)
     assert len(calls) == first
     assert maps.risk_class("-204") == "Class IIa"
+
+
+def test_reference_body_is_decoded_as_utf8_despite_the_missing_charset_header(
+    fake_session,
+):
+    """Same endpoint family as the Data Lake: UTF-8 served as bare text/csv."""
+    from eudamed.reference import _get_csv
+
+    body = "ID,CODE,LANGUAGE,VALUE\n-204,RISK_CLASS_ID,fr,Classe IIa — élevée\n"
+    fake_session.queue(FakeResponse(
+        200, content=body.encode("utf-8"),
+        text=body.encode("utf-8").decode("iso-8859-1"),
+        headers={"Content-Type": "text/csv"},
+    ))
+    assert _get_csv("RISK_CLASS_ID") == body

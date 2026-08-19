@@ -1,6 +1,6 @@
 """Streaming exports of filtered device searches to JSONL, CSV or Parquet.
 
-The unfiltered register is 2.98 million UDI-DI records; nothing here holds a
+The unfiltered register is over three million UDI-DI records; nothing here holds a
 result set in memory. Pages are walked one at a time and written as they
 arrive. JSONL is written straight through, one line per record. CSV cannot be
 streamed directly because the records are ragged -- a field present on one
@@ -294,7 +294,7 @@ def _csv_from_buffer(buffer: Path, out: Path) -> None:
 
 
 # Rows held in memory at once while writing a Parquet row group. An unfiltered
-# export is 2.98 million records; this keeps memory bounded to one batch
+# export is over three million records; this keeps memory bounded to one batch
 # regardless of how large the export is.
 _PARQUET_BATCH_SIZE = 50_000
 
@@ -383,7 +383,7 @@ def export_devices(
     """Stream a filtered device search to disk and record it in a manifest.
 
     Pages are written as they arrive rather than accumulated -- an unfiltered
-    export is 2.98 million records and will not fit in memory. ``fmt`` selects
+    export is over three million records and will not fit in memory. ``fmt`` selects
     one of ``FORMATS``: JSONL streams straight through; CSV buffers to a
     temporary JSONL file and unions record keys in a second pass, because
     device records are ragged and a header taken from the first record would

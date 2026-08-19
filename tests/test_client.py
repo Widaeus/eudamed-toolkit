@@ -22,8 +22,8 @@ def test_an_unverified_filter_raises(tmp_path):
 
     The API ignores query parameters it does not recognise and returns the whole
     register with HTTP 200. A misspelled filter therefore does not fail, it
-    silently replaces your result set with 2.98 million records. Anything that
-    weakens this check should fail here."""
+    silently replaces your result set with the whole register -- over three
+    million records. Anything that weakens this check should fail here."""
     client = _client(tmp_path)
     with pytest.raises(ValueError, match="unverified"):
         client.search_devices(manufacturerName="Siemens")

@@ -62,7 +62,9 @@ def _get_csv(code: str, session: requests.Session | None = None) -> str:
         params={"api-version": "v1.0", "format": "csv", "CODE": code},
     )
     resp.raise_for_status()
-    return resp.text
+    # Served as bare ``text/csv`` with no charset, so ``resp.text`` would be
+    # decoded as ISO-8859-1 and mangle every non-ASCII label. The body is UTF-8.
+    return resp.content.decode("utf-8")
 
 
 def _parse_english(csv_text: str) -> dict[str, str]:

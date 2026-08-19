@@ -8,7 +8,8 @@ mandatory. It is the same underlying data as the SPA read API, but it returns
 **60 columns in one request**, including three that the SPA search endpoint
 always returns as null: ``DEVICE_NAME``, ``NOMENCLATURE_CODE`` and
 ``DEVICE_CRITERION``. That collapses the per-device enrichment cost that a
-client built only on the search endpoint would otherwise pay.
+client built only on the search endpoint would otherwise pay. The full
+empirical reference is ``docs/datalake-reference.md``.
 
 Two properties govern how it must be used, both established empirically:
 
@@ -18,25 +19,44 @@ and must be partitioned further. `fetch` flags this rather than silently
 returning a short answer, because a truncated pull that looks complete is the
 worst failure mode here.
 
-**Only four columns actually filter.** Verified by observing the row count:
+**Only some columns are accepted as filters, and the rest are refused with
+HTTP 400.** Verified 2026-08-19 by sending each of the 60 column names:
 
-===========================  ========  ===================================
-Parameter                    Filters?  Note
-===========================  ========  ===================================
-``SPECIAL_DEVICE_TYPE_ID``   yes       -43 MDR software, -47 IVDR software
-``MF_SRN``                   yes       the practical partition key
-``BASIC_UDI``                yes       exact, one device
-``PRIMARY_DI``               yes       exact, one UDI-DI
-``RISK_CLASS_ID``            no        returns empty
-``DEVICE_CRITERION``         no        returns empty
-``NOMENCLATURE_CODE``        no        returns empty
-``LATEST_VERSION``           no        returns empty
-===========================  ========  ===================================
+===========================  ============  =====================================
+Parameter                    Match         Note
+===========================  ============  =====================================
+``MF_SRN``                   exact         the practical partition key
+``BASIC_UDI``                exact         one device model
+``PRIMARY_DI``               exact         one UDI-DI
+``SPECIAL_DEVICE_TYPE_ID``   exact         -43 MDR / -47 IVDR / -1192 MDD /
+                                           -1202 IVDD software
+``RISK_CLASS_ID``            exact         negative reference id, e.g. -204
+``APPLICABLE_LEGISLATION_ID`` exact        e.g. -197 (MDR)
+``PLACED_ON_THE_MARKET_ID``  exact         reference id
+``NOMENCLATURE_CODE``        exact         stored with a leading space, and
+                                           no prefix match -- see `fetch`
+``DEVICE_NAME``              exact, ci     whole field, case-insensitive
+``TRADE_NAME``               exact, ci     whole field, case-insensitive
+``REFERENCE``                exact, ci
+``DEVICE_MODEL``             exact
+``MEDICAL_PURPOSE``          exact
+===========================  ============  =====================================
 
-A workable pattern is to discover manufacturer SRNs elsewhere — the public
-search API's response carries ``manufacturerSrn`` for free — and then pull each
+Every other column -- ``DEVICE_CRITERION``, ``DEVICE_STATUS_TYPE_ID``,
+``LATEST_VERSION``, ``STATUS_ID``, ``MF_NAME``, ``UUID``, ``ID``, the ULIDs,
+``AR_SRN`` and every boolean flag -- returns HTTP 400 with an empty body, as
+does any name that is not a column. Filters combine with AND.
+
+An earlier version of this module listed ``RISK_CLASS_ID`` as inert. It is
+not: the reference ids are negative integers (Class IIa is -204), and a
+guessed value matches nothing, which reads as "inert" if the check is a row
+count.
+
+A workable pattern is to discover manufacturer SRNs elsewhere -- the public
+search API's response carries ``manufacturerSrn`` for free -- and then pull each
 manufacturer's complete device list from the Data Lake by ``MF_SRN``, one
-request per manufacturer rather than one per device.
+request per manufacturer rather than one per device. A manufacturer that hits
+the cap can be split further on ``RISK_CLASS_ID`` or ``APPLICABLE_LEGISLATION_ID``.
 """
 
 from __future__ import annotations
@@ -62,13 +82,42 @@ BASE = "https://api.datalake.sante.service.ec.europa.eu/eudamed"
 API_VERSION = "v1.0"
 ROW_CAP = 1000
 
-SPECIAL_DEVICE_TYPE = {"mdr_software": -43, "ivdr_software": -47}
-
-VERIFIED_FILTERS = {"SPECIAL_DEVICE_TYPE_ID", "MF_SRN", "BASIC_UDI", "PRIMARY_DI"}
-INERT_FILTERS = {
-    "RISK_CLASS_ID", "DEVICE_CRITERION", "NOMENCLATURE_CODE", "LATEST_VERSION",
-    "MF_COUNTRY_ISO2_CODE", "DEVICE_STATUS_TYPE_ID",
+SPECIAL_DEVICE_TYPE = {
+    "mdr_software": -43,
+    "ivdr_software": -47,
+    "mdd_software": -1192,   # legacy (Art. 120) devices under the MDD
+    "ivdd_software": -1202,  # legacy devices under the IVDD
 }
+
+# Columns the endpoint accepts as query parameters (verified 2026-08-19 by
+# sending each of the 60 column names and observing the rows returned).
+VERIFIED_FILTERS = frozenset({
+    "MF_SRN", "BASIC_UDI", "PRIMARY_DI", "SPECIAL_DEVICE_TYPE_ID",
+    "RISK_CLASS_ID", "APPLICABLE_LEGISLATION_ID", "PLACED_ON_THE_MARKET_ID",
+    "NOMENCLATURE_CODE", "DEVICE_NAME", "TRADE_NAME", "REFERENCE",
+    "DEVICE_MODEL", "MEDICAL_PURPOSE",
+})
+# Columns of the export that the endpoint refuses as query parameters with
+# HTTP 400 and an empty body. Listed so the refusal can be explained locally
+# rather than surfacing as a failed request.
+REJECTED_FILTERS = frozenset({
+    "ID", "UDI_DI_DATA_ULID", "UUID", "LATEST_VERSION", "CMR_SUBSTANCE",
+    "ENDOCRINE_DISRUPTOR", "LATEX", "REPROCESSED", "STERILE", "STERILIZATION",
+    "NEW_DEVICE", "VERSION_NUMBER", "BASIC_UDI_DATA_UUID", "BASIC_UDI_DATA_ULID",
+    "ACTIVE", "ADMINISTERING_MEDICINE", "ANIMAL_TISSUES", "COMPANION_DIAGNOSTICS",
+    "HUMAN_TISSUES", "IMPLANTABLE", "KIT", "MEASURING_FUNCTION",
+    "MICROBIAL_SUBSTANCES", "NEAR_PATIENT_TESTING", "REUSABLE", "SELF_TESTING",
+    "REAGENT", "MULTI_COMPONENT_ID", "INSTRUMENT", "PROFESSIONAL_TESTING",
+    "SUTURES", "HUMAN_PRODUCT", "MEDICINAL_PRODUCT", "DEVICE_CRITERION",
+    "MF_NAME", "DEVICE_STATUS_TYPE_ID", "MF_ACTOR_NAMES",
+    "ACTOR_ABBREVIATED_NAMES", "STATUS_ID", "AR_NAME", "AR_SRN",
+    "AR_ACTOR_NAMES", "UNIT_OF_USE_DI", "DIRECT_MARKETING_DI", "SECONDARY_DI",
+    "CONTAINER_PACKAGE_DIS", "SUBSTATUSES",
+    # not a column at all, but a name people reach for
+    "MF_COUNTRY_ISO2_CODE",
+})
+# Kept for callers of the 0.1.0 name; the semantics were never "inert".
+INERT_FILTERS = REJECTED_FILTERS
 
 log = logging.getLogger("eudamed.datalake")
 
@@ -158,7 +207,10 @@ class DataLakeClient:
                 raise RequestFailed(
                     url, query, status=resp.status_code, attempts=attempt + 1
                 )
-            return resp.text
+            # Served as bare ``text/csv`` with no charset, so ``resp.text``
+            # would be decoded as ISO-8859-1 and mangle every accented
+            # manufacturer name. The body is UTF-8.
+            return resp.content.decode("utf-8")
 
         log.error("gave up on %s", query)
         raise RequestFailed(
@@ -166,22 +218,28 @@ class DataLakeClient:
         )
 
     def fetch(self, endpoint: str = "udi", **filters: Any) -> Result:
-        """One Data Lake query. Raises on a filter known to be inert or unverified.
+        """One Data Lake query. Raises on a filter the endpoint refuses or one
+        that has not been verified against it.
 
-        An inert filter returns an empty body rather than an error, which would
-        read as "no such devices" instead of "that parameter does nothing". An
-        unverified filter is refused for the same reason: an empty result and a
-        parameter that was never checked are indistinguishable from here.
+        A column the endpoint refuses is answered with HTTP 400 and an empty
+        body; refusing it here names the column instead of surfacing a failed
+        request. An unverified name is refused for the reason the whole
+        package exists: an empty result and a parameter that was never checked
+        are indistinguishable from here.
+
+        ``NOMENCLATURE_CODE`` is sent in the form the export stores it -- with a
+        leading space (``" Z12110102"``) -- because the match is exact and the
+        code as a person writes it returns zero rows with HTTP 200.
 
         A query the service could not answer raises ``RequestFailed``. Only a
         query the service *did* answer, with no matching rows, comes back as an
         empty ``Result``.
         """
-        bad = {k for k in filters if k in INERT_FILTERS}
+        bad = {k for k in filters if k in REJECTED_FILTERS}
         if bad:
             raise ValueError(
-                f"{sorted(bad)} do not filter this endpoint — they return an empty "
-                "body, which would read as 'no devices found'. Partition on "
+                f"{sorted(bad)} are not accepted as filters by this endpoint — it "
+                "answers HTTP 400. Partition on "
                 f"{sorted(VERIFIED_FILTERS)} instead."
             )
         unknown = {k for k in filters if k not in VERIFIED_FILTERS}
@@ -190,6 +248,9 @@ class DataLakeClient:
                 f"unverified filter(s) {sorted(unknown)} — only "
                 f"{sorted(VERIFIED_FILTERS)} are known to filter this endpoint."
             )
+        code = filters.get("NOMENCLATURE_CODE")
+        if isinstance(code, str) and code.strip():
+            filters["NOMENCLATURE_CODE"] = " " + code.strip()
 
         params = {"api-version": API_VERSION, "format": "csv",
                   **{k: v for k, v in filters.items() if v is not None}}
@@ -206,9 +267,11 @@ class DataLakeClient:
     # ------------------------------------------------------------------ helpers
 
     def software_frame(self, kind: str = "mdr_software") -> Result:
-        """The software-flagged slice. Truncated at 1,000 rows, so use it for the
-        count of flagged records, not to enumerate them; enumerate by manufacturer
-        via `by_manufacturer`.
+        """The software-flagged slice for one legislation: ``mdr_software``,
+        ``ivdr_software``, ``mdd_software`` or ``ivdd_software``. The MDR slice
+        exceeds the 1,000-row cap, so use it for presence, not enumeration;
+        enumerate by manufacturer via `by_manufacturer`, or split it on
+        ``RISK_CLASS_ID``. The other three were under the cap on 2026-08-19.
         """
         return self.fetch("udi", SPECIAL_DEVICE_TYPE_ID=SPECIAL_DEVICE_TYPE[kind])
 

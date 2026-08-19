@@ -32,6 +32,12 @@ class FakeResponse:
             raise ValueError("no json")
         return self._payload
 
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
 
 @pytest.fixture
 def fake_session(monkeypatch):

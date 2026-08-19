@@ -34,12 +34,63 @@ def test_a_short_page_is_not_truncated(tmp_path, monkeypatch):
     assert result.truncated is False
 
 
-def test_an_inert_filter_raises(tmp_path):
-    """RISK_CLASS_ID, DEVICE_CRITERION, NOMENCLATURE_CODE and LATEST_VERSION are
-    accepted by the endpoint and return nothing. Silently filtering to zero rows
-    is indistinguishable from a device that does not exist."""
-    with pytest.raises(ValueError):
-        DataLakeClient(run_log=tmp_path / "dl.jsonl").fetch(RISK_CLASS_ID=-204)
+def test_a_rejected_filter_raises_before_any_request(tmp_path):
+    """DEVICE_CRITERION, DEVICE_STATUS_TYPE_ID, LATEST_VERSION and the boolean
+    flag columns are columns of the export but not accepted as query
+    parameters: the service answers HTTP 400 with an empty body (verified
+    2026-08-19). Refusing them locally names the problem instead of surfacing
+    it as a failed request."""
+    with pytest.raises(ValueError, match="DEVICE_CRITERION"):
+        DataLakeClient(run_log=tmp_path / "dl.jsonl").fetch(DEVICE_CRITERION="LEGACY")
+
+
+def test_risk_class_and_legislation_are_accepted_filters(tmp_path, monkeypatch):
+    """An earlier version listed RISK_CLASS_ID as inert. It filters -- the
+    reference IDs are negative integers (Class IIa is -204), and a guessed
+    positive one matches nothing, which is presumably how it was misread."""
+    sent = []
+    monkeypatch.setattr(
+        DataLakeClient, "_get_csv", lambda self, params: sent.append(params) or CSV
+    )
+    client = DataLakeClient(run_log=tmp_path / "dl.jsonl")
+    client.fetch(RISK_CLASS_ID=-204, APPLICABLE_LEGISLATION_ID=-197)
+    assert sent[0]["RISK_CLASS_ID"] == -204
+    assert sent[0]["APPLICABLE_LEGISLATION_ID"] == -197
+
+
+def test_nomenclature_code_is_sent_with_the_leading_space_the_export_stores(
+    tmp_path, monkeypatch
+):
+    """Every NOMENCLATURE_CODE value in the export carries a leading space
+    (' Z12110102'), and the filter is an exact match, so the code as a person
+    writes it returns zero rows -- silently, with HTTP 200. The client sends
+    the stored form."""
+    sent = []
+    monkeypatch.setattr(
+        DataLakeClient, "_get_csv", lambda self, params: sent.append(params) or CSV
+    )
+    client = DataLakeClient(run_log=tmp_path / "dl.jsonl")
+    client.fetch(NOMENCLATURE_CODE="Z12110102")
+    assert sent[0]["NOMENCLATURE_CODE"] == " Z12110102"
+    client.fetch(NOMENCLATURE_CODE=" Z12110102")
+    assert sent[1]["NOMENCLATURE_CODE"] == " Z12110102"
+
+
+def test_the_body_is_decoded_as_utf8_despite_the_missing_charset_header(
+    tmp_path, fake_session
+):
+    """The endpoint serves UTF-8 as bare ``text/csv``. Without a charset,
+    ``requests`` decodes ``.text`` as ISO-8859-1 and every accented
+    manufacturer name comes back mangled ('FKG Dentaire SÃ rl')."""
+    body = "MF_SRN,MF_NAME\nCH-MF-000000001,FKG Dentaire Sàrl\n"
+    fake_session.queue(FakeResponse(
+        200, content=body.encode("utf-8"),
+        text=body.encode("utf-8").decode("iso-8859-1"),
+        headers={"Content-Type": "text/csv"},
+    ))
+    client = DataLakeClient(run_log=tmp_path / "dl.jsonl", min_interval=0.0)
+    result = client.fetch(MF_SRN="CH-MF-000000001")
+    assert result.rows[0]["MF_NAME"] == "FKG Dentaire Sàrl"
 
 
 def test_an_unknown_filter_raises(tmp_path):
