@@ -71,8 +71,8 @@ the extract has to be a snapshot, re-run it from scratch.
 ## Three things the API does that will cost you a day
 
 **It silently ignores parameters it does not recognise.** A misspelled or
-unsupported filter is not rejected — it returns the whole 2.98-million-record
-register with HTTP 200. A typo does not fail loudly; it quietly replaces your
+unsupported filter is not rejected — it returns the whole register (3.18
+million UDI-DI records on 2026-08-19) with HTTP 200. A typo does not fail loudly; it quietly replaces your
 result set with everything. This client refuses any filter name that has not
 been individually verified to change `totalElements` (see
 `VERIFIED_DEVICE_FILTERS` in `eudamed.client`); it will raise `ValueError`
@@ -130,10 +130,38 @@ counts devices per EMDN code through the search endpoint, is unaffected and
 works. See [`docs/api-reference.md`](docs/api-reference.md).
 
 See [`docs/api-reference.md`](docs/api-reference.md) for the rest — the
-endpoint map, the full verified and non-working filter lists, the endpoints
-that 500 or 302 unconditionally, the fields the search response always returns
-`null`, the throughput and throttling measurements, and the interface routes
-for linking back into the public site.
+endpoint map, the full verified and non-working filter lists with the refdata
+vocabularies and their counts, the endpoints that 500 or 302 unconditionally,
+the fields the search response always returns `null`, the certificate and
+notified-body endpoints, the throughput and throttling measurements, and the
+interface routes for linking back into the public site.
+
+## The Data Lake is not the register
+
+`eudamed.datalake` talks to the Commission's bulk CSV endpoint, which returns
+60 columns per UDI-DI — including the device name, EMDN code and legacy/MDR
+pathway that the search API nulls — one manufacturer per request. It is
+documented in [`docs/datalake-reference.md`](docs/datalake-reference.md),
+which ends with what the export leaves out. The short version:
+
+- **It lags the live register.** Records registered since the last refresh
+  (roughly daily; undocumented) are absent, and nothing in the data dates the
+  snapshot. On the morning of 2026-08-19, 32 of 40 records sampled from the
+  newest page of the search API had no Data Lake row.
+- **Every response is capped at 1,000 rows with no pagination**, and a capped
+  response looks complete. The client flags a 1,000-row result as
+  `truncated`; a manufacturer over the cap has to be split on `RISK_CLASS_ID`
+  or `APPLICABLE_LEGISLATION_ID`, or completed from the search API.
+- **It refuses filters it does not accept with HTTP 400** rather than
+  ignoring them — safer than the search API, with the one trap that a client
+  treating any non-200 as "no rows" reads a refused filter as an empty
+  manufacturer. The client raises `ValueError` for a refused or unverified
+  column name before sending anything.
+- **It carries current versions only, no timestamps, no certificates, no
+  actor uuids and no manufacturer country**; and its reference vocabulary
+  has no labels for the legacy software type ids.
+- **The CSV is UTF-8 served without a charset.** Read the bytes as UTF-8, or
+  every accented manufacturer name is mangled. The client does.
 
 ## Basic UDI-DI vs UDI-DI
 

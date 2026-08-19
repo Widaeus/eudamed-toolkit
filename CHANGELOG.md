@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `eudamed.datalake` and `eudamed.reference` decoded the Data Lake's CSV
+  through `requests`' default, which — because the service sends `text/csv`
+  with no charset — is ISO-8859-1. Every non-ASCII character came back
+  mangled (`FKG Dentaire SÃ rl`). Both now decode the body as UTF-8.
+- `eudamed.datalake` listed `RISK_CLASS_ID` as a filter the endpoint accepts
+  and ignores. It filters (verified 2026-08-19; Class IIa is `-204`), as do
+  `APPLICABLE_LEGISLATION_ID`, `PLACED_ON_THE_MARKET_ID`,
+  `NOMENCLATURE_CODE`, `DEVICE_NAME`, `TRADE_NAME`, `REFERENCE`,
+  `DEVICE_MODEL` and `MEDICAL_PURPOSE`; all are now in `VERIFIED_FILTERS`.
+  The columns the endpoint does not accept — `DEVICE_CRITERION`,
+  `DEVICE_STATUS_TYPE_ID`, `LATEST_VERSION` and the rest — are refused with
+  HTTP 400 and an empty body, not answered with an empty result as the old
+  docstring said; they are now `REJECTED_FILTERS` (`INERT_FILTERS` remains
+  as an alias) and the `ValueError` says so.
+- `DataLakeClient.fetch` sends `NOMENCLATURE_CODE` in the form the export
+  stores it, with a leading space; the match is exact and the bare code
+  returned zero rows with HTTP 200.
+
 ### Added
+
+- `docs/datalake-reference.md` — an empirical reference for the DG SANTE
+  Data Lake: how it is reached, its three endpoints, the 1,000-row cap, the
+  full accepted/refused filter lists for `/udi`, the 60 columns and their
+  value conventions, `/actors` (with its personal-data columns) and
+  `/reference` with the decoded vocabularies, and a closing section on what
+  the export does not carry — the lag behind the live register, cap
+  truncation, current-versions-only, the missing subject areas and the
+  incomplete reference vocabulary.
+- `docs/api-reference.md` — the refdata vocabularies for risk class,
+  legislation and status with 2026-08-19 counts (and the values that 400);
+  the legacy software device-type codes; `deviceCriteria=SPP`; the
+  certificate, refused-application and notified-body endpoints with their
+  fields and verified filters; the `medicalPurpose` and certificate-scope
+  `intendedPurpose` fields that qualify the no-intended-purpose finding;
+  timestamps on the detail records; SRN conventions; the EMDN source file;
+  the Commission's own documentation and its broken links.
+- `SPECIAL_DEVICE_TYPE` gained `mdd_software` (`-1192`) and `ivdd_software`
+  (`-1202`), the flags on legacy devices, which `/reference` has no labels
+  for.
 
 - `eudamed.export` — resumable exports. Every completed page is recorded in
   `<out>.progress.json`; an export that raises leaves that checkpoint and its

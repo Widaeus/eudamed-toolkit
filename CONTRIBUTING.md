@@ -25,8 +25,8 @@ pytest
 **A new entry in `VERIFIED_DEVICE_FILTERS` (in `src/eudamed/client.py`)
 requires evidence that it changes `totalElements` against the live API.** This
 is the one rule in this codebase that cannot be relaxed: the API silently
-ignores query parameters it does not recognise and returns the whole 2.98
-million-record register with HTTP 200, so a filter added on the strength of
+ignores query parameters it does not recognise and returns the whole
+register — over three million UDI-DI records — with HTTP 200, so a filter added on the strength of
 what a form field is *named*, rather than what it measurably does, turns
 every count taken with it into a false one.
 
@@ -46,6 +46,14 @@ match, it doesn't — add it to the "verified NOT to work" list in
 matching entry to `FILTER_HELP` in `src/eudamed/cli.py` describing the
 parameter's real semantics (prefix match, substring, exact, full refdata
 code), and to the CLI's own tests.
+
+The Data Lake client's `VERIFIED_FILTERS` (in `src/eudamed/datalake.py`)
+holds to the same rule with a different test: that endpoint refuses a column
+it does not accept with HTTP 400, and answers an accepted filter with a
+wrong value as an empty 200, so a candidate has to be shown to *return
+matching rows* — not merely to not fail — with a value taken from the data.
+Record the column, the value and the row count in the pull request, and add
+a refused column to `REJECTED_FILTERS` and to `docs/datalake-reference.md`.
 
 ## Reporting an undocumented endpoint
 
